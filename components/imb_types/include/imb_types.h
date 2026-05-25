@@ -5,6 +5,15 @@
 #define IMB_UID_LEN            15   /* 7-byte NFC UID as 14 hex chars + null terminator */
 #define IMB_NAME_LEN           32   /* max human-readable item name length including null */
 #define IMB_REGISTRY_MAX_ITEMS 64   /* hard upper bound on items per box; used for stack buffers */
+#define IMB_MESH_MAX_BOXES      8   /* max boxes in one mesh */
+#define IMB_REPORT_MAX_ENTRIES (IMB_MESH_MAX_BOXES * IMB_REGISTRY_MAX_ITEMS)  /* 512; mesh-wide report */
+
+/* Operational mode — persisted in NVS imb_state namespace and carried in BLE protocol. */
+typedef enum {
+    IMB_MODE_SETUP        = 0,  /* first boot, awaiting PIN + box name from phone */
+    IMB_MODE_FIELD_CHECK  = 1,  /* default after registration; lid-open triggers scan */
+    IMB_MODE_REGISTRATION = 2,  /* active registration session; tags accepted/named */
+} imb_op_mode_e;
 
 /* Shared item record used by registry, session, and delta components. */
 typedef struct {
