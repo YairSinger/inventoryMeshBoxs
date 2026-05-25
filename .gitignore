@@ -1,0 +1,9 @@
+build/
+.cache/
+sdkconfig.old
+*.pyc
+__pycache__/
+
+# ESP-IDF generated (keep sdkconfig — it captures target chip config)
+# but ignore per-component test builds
+components/*/test/build/

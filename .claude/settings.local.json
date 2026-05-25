@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(export IDF_PATH=/Users/yair/esp/esp-idf)",
+      "Bash(export IDF_PYTHON_ENV_PATH=/Users/yair/.espressif/python_env/idf5.3_py3.9_env)",
+      "Bash(export PATH=\"$IDF_PYTHON_ENV_PATH/bin:$IDF_PATH/tools:$PATH\")",
+      "Bash(python3 /Users/yair/esp/esp-idf/tools/idf.py --version)"
+    ]
+  }
+}
