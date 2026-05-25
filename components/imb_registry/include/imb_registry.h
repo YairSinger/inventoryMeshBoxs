@@ -3,9 +3,6 @@
 #include <stdint.h>
 #include "imb_types.h"
 
-/* Hard upper bound on items per box. imb_delta uses this for stack-allocated buffers. */
-#define IMB_REGISTRY_MAX_ITEMS 64
-
 typedef enum {
     IMB_REG_OK = 0,
     IMB_REG_ERR_NOT_FOUND,  /* uid does not exist in registry */
