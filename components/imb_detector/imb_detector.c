@@ -14,7 +14,7 @@ void imb_detector_init(imb_detector_t *det,
     det->ctx       = ctx;
 }
 
-static void fire(imb_detector_t *det, imb_direction_t dir, const char *uid)
+static void fire(imb_detector_t *det, imb_direction_e dir, const char *uid)
 {
     imb_scan_event_t ev;
     ev.dir = dir;
@@ -49,7 +49,7 @@ void imb_detector_on_reader_event(imb_detector_t *det,
 
     if (same_uid && !same_reader && in_window) {
         /* directional pair: reader 0 first = INSERT, reader 1 first = EXTRACT */
-        imb_direction_t dir = (det->pending_reader == 0) ? IMB_INSERT : IMB_EXTRACT;
+        imb_direction_e dir = (det->pending_reader == 0) ? IMB_INSERT : IMB_EXTRACT;
         fire(det, dir, uid);
         clear_pending(det);
         return;
