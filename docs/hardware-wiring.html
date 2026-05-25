@@ -1,0 +1,690 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>InventoryMeshBox — Hardware Wiring Guide</title>
+<style>
+  :root {
+    --spi:    #4A90D9;
+    --i2c:    #7B68EE;
+    --gpio:   #50C878;
+    --power:  #FF6B6B;
+    --rmt:    #FFB347;
+    --usb:    #A0A0A0;
+    --bg:     #0F1117;
+    --card:   #1A1D27;
+    --border: #2A2D3A;
+    --text:   #E2E8F0;
+    --muted:  #8892A4;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'SF Mono', 'Fira Code', monospace;
+    font-size: 13px;
+    line-height: 1.6;
+    padding: 24px;
+  }
+
+  h1 { font-size: 20px; font-weight: 700; margin-bottom: 4px; letter-spacing: 0.5px; }
+  h2 { font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: 1px;
+       color: var(--muted); margin: 28px 0 12px; }
+  h3 { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 1px;
+       color: var(--muted); margin-bottom: 8px; }
+
+  .subtitle { color: var(--muted); font-size: 12px; margin-bottom: 28px; }
+
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; }
+
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px;
+  }
+
+  /* ── Chip diagram ─────────────────────────────────────────────────── */
+
+  .chip-wrap {
+    display: flex;
+    justify-content: center;
+    margin: 8px 0 28px;
+  }
+
+  .chip-diagram {
+    display: grid;
+    grid-template-columns: 160px 260px 160px;
+    grid-template-rows: auto;
+    align-items: center;
+    gap: 0;
+  }
+
+  .chip-body {
+    background: #1E2235;
+    border: 2px solid #3A4060;
+    border-radius: 10px;
+    padding: 12px 8px;
+    text-align: center;
+    grid-column: 2;
+  }
+
+  .chip-title { font-size: 11px; font-weight: 700; color: #7B8CDE; letter-spacing: 1px; }
+  .chip-model { font-size: 10px; color: var(--muted); margin-top: 2px; }
+  .chip-spec  { font-size: 9px;  color: #4A5568; margin-top: 6px; }
+
+  .pin-col-left, .pin-col-right {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .pin-col-left  { align-items: flex-end; padding-right: 6px; }
+  .pin-col-right { align-items: flex-start; padding-left: 6px; }
+
+  .pin-row {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    height: 22px;
+  }
+  .pin-col-left .pin-row { flex-direction: row-reverse; }
+
+  .pin-line {
+    width: 20px;
+    height: 2px;
+    border-radius: 1px;
+  }
+  .pin-dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .pin-label {
+    font-size: 10px;
+    white-space: nowrap;
+  }
+  .pin-num {
+    font-size: 9px;
+    color: #4A5568;
+    min-width: 20px;
+  }
+  .pin-col-left  .pin-num { text-align: left; }
+  .pin-col-right .pin-num { text-align: left; }
+
+  /* ── Color tags ───────────────────────────────────────────────────── */
+
+  .tag {
+    display: inline-block;
+    padding: 1px 6px;
+    border-radius: 3px;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+  }
+  .tag-spi   { background: rgba(74,144,217,0.15); color: var(--spi);   border: 1px solid rgba(74,144,217,0.3); }
+  .tag-i2c   { background: rgba(123,104,238,0.15); color: var(--i2c);  border: 1px solid rgba(123,104,238,0.3); }
+  .tag-gpio  { background: rgba(80,200,120,0.15);  color: var(--gpio); border: 1px solid rgba(80,200,120,0.3); }
+  .tag-power { background: rgba(255,107,107,0.15); color: var(--power);border: 1px solid rgba(255,107,107,0.3); }
+  .tag-rmt   { background: rgba(255,179,71,0.15);  color: var(--rmt);  border: 1px solid rgba(255,179,71,0.3); }
+  .tag-usb   { background: rgba(160,160,160,0.1);  color: var(--usb);  border: 1px solid rgba(160,160,160,0.2); }
+
+  /* ── Tables ───────────────────────────────────────────────────────── */
+
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  th {
+    text-align: left;
+    padding: 6px 10px;
+    color: var(--muted);
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    border-bottom: 1px solid var(--border);
+  }
+  td {
+    padding: 7px 10px;
+    border-bottom: 1px solid rgba(42,45,58,0.5);
+    vertical-align: middle;
+  }
+  tr:last-child td { border-bottom: none; }
+  tr:hover td { background: rgba(255,255,255,0.02); }
+
+  .gpio-num {
+    font-weight: 700;
+    font-size: 13px;
+    padding: 2px 7px;
+    border-radius: 4px;
+    background: rgba(255,255,255,0.05);
+    border: 1px solid var(--border);
+    display: inline-block;
+    min-width: 36px;
+    text-align: center;
+  }
+
+  .signal   { color: var(--text); }
+  .device   { color: var(--muted); font-size: 11px; }
+  .note     { color: #4A5568; font-size: 10px; font-style: italic; }
+
+  .reserved { color: #FF6B6B; }
+  .warn     { font-size: 10px; color: #FFB347; background: rgba(255,179,71,0.08);
+              border: 1px solid rgba(255,179,71,0.2); border-radius: 4px;
+              padding: 6px 10px; margin-top: 8px; }
+
+  /* ── Component cards ──────────────────────────────────────────────── */
+
+  .comp-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 12px;
+    margin-top: 8px;
+  }
+
+  .comp-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 12px;
+  }
+  .comp-card h4 { font-size: 11px; font-weight: 700; margin-bottom: 6px; }
+  .comp-card .part { font-size: 10px; color: var(--muted); margin-bottom: 6px; }
+  .comp-card .pins { font-size: 10px; color: #8892A4; line-height: 1.8; }
+  .comp-card .pins span { color: var(--text); }
+
+  .scope-badge {
+    display: inline-block;
+    font-size: 9px;
+    padding: 1px 5px;
+    border-radius: 3px;
+    margin-left: 4px;
+    vertical-align: middle;
+  }
+  .phase1 { background: rgba(80,200,120,0.15); color: #50C878; border: 1px solid rgba(80,200,120,0.3); }
+  .phase2 { background: rgba(123,104,238,0.15); color: #7B68EE; border: 1px solid rgba(123,104,238,0.3); }
+  .proto  { background: rgba(255,179,71,0.15);  color: #FFB347; border: 1px solid rgba(255,179,71,0.3); }
+
+  /* ── LED contract ─────────────────────────────────────────────────── */
+
+  .led-row { display: flex; align-items: center; gap: 10px; padding: 5px 0; border-bottom: 1px solid rgba(42,45,58,0.5); }
+  .led-row:last-child { border-bottom: none; }
+  .led-dot { width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0; }
+  .led-event { font-size: 11px; flex: 1; }
+  .led-pattern { font-size: 10px; color: var(--muted); }
+
+  /* ── Image gen prompt ─────────────────────────────────────────────── */
+
+  .prompt-box {
+    background: #0A0C14;
+    border: 1px solid #2A2D3A;
+    border-radius: 6px;
+    padding: 16px;
+    font-size: 11px;
+    line-height: 1.8;
+    color: #A0AEC0;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .copy-btn {
+    background: rgba(74,144,217,0.15);
+    border: 1px solid rgba(74,144,217,0.3);
+    color: var(--spi);
+    border-radius: 4px;
+    padding: 4px 12px;
+    font-size: 11px;
+    cursor: pointer;
+    font-family: inherit;
+    margin-top: 8px;
+  }
+  .copy-btn:hover { background: rgba(74,144,217,0.25); }
+
+  hr { border: none; border-top: 1px solid var(--border); margin: 28px 0; }
+</style>
+</head>
+<body>
+
+<h1>InventoryMeshBox — Hardware Wiring Guide</h1>
+<p class="subtitle">ESP32-S3 N16R8 · Phase 1 single-box build · Two PN532 NFC readers · WS2812B LED</p>
+
+<!-- ── Chip diagram ──────────────────────────────────────────────────── -->
+
+<h2>Pin Map</h2>
+
+<div class="chip-wrap">
+  <div class="chip-diagram">
+
+    <!-- Left pins -->
+    <div class="pin-col-left">
+      <div class="pin-row">
+        <span class="pin-label" style="color:var(--power)">3.3V</span>
+        <div class="pin-dot" style="background:var(--power)"></div>
+        <div class="pin-line" style="background:var(--power)"></div>
+      </div>
+      <div class="pin-row">
+        <span class="pin-label" style="color:var(--power)">GND</span>
+        <div class="pin-dot" style="background:#555"></div>
+        <div class="pin-line" style="background:#555"></div>
+      </div>
+      <div class="pin-row">
+        <span class="pin-label" style="color:var(--i2c)">GPIO 2 — SDA</span>
+        <div class="pin-dot" style="background:var(--i2c)"></div>
+        <div class="pin-line" style="background:var(--i2c)"></div>
+      </div>
+      <div class="pin-row">
+        <span class="pin-label" style="color:var(--i2c)">GPIO 3 — SCL</span>
+        <div class="pin-dot" style="background:var(--i2c)"></div>
+        <div class="pin-line" style="background:var(--i2c)"></div>
+      </div>
+      <div class="pin-row">
+        <span class="pin-label" style="color:var(--gpio)">GPIO 4 — SR04 TRIG</span>
+        <div class="pin-dot" style="background:var(--gpio)"></div>
+        <div class="pin-line" style="background:var(--gpio)"></div>
+      </div>
+      <div class="pin-row">
+        <span class="pin-label" style="color:var(--gpio)">GPIO 5 — SR04 ECHO</span>
+        <div class="pin-dot" style="background:var(--gpio)"></div>
+        <div class="pin-line" style="background:var(--gpio)"></div>
+      </div>
+      <div class="pin-row">
+        <span class="pin-label" style="color:var(--spi)">GPIO 9 — PN532 #2 CS</span>
+        <div class="pin-dot" style="background:var(--spi)"></div>
+        <div class="pin-line" style="background:var(--spi)"></div>
+      </div>
+      <div class="pin-row">
+        <span class="pin-label" style="color:var(--spi)">GPIO 10 — PN532 #1 CS</span>
+        <div class="pin-dot" style="background:var(--spi)"></div>
+        <div class="pin-line" style="background:var(--spi)"></div>
+      </div>
+      <div class="pin-row">
+        <span class="pin-label" style="color:var(--spi)">GPIO 11 — MOSI</span>
+        <div class="pin-dot" style="background:var(--spi)"></div>
+        <div class="pin-line" style="background:var(--spi)"></div>
+      </div>
+      <div class="pin-row">
+        <span class="pin-label" style="color:var(--spi)">GPIO 12 — SCK</span>
+        <div class="pin-dot" style="background:var(--spi)"></div>
+        <div class="pin-line" style="background:var(--spi)"></div>
+      </div>
+      <div class="pin-row">
+        <span class="pin-label" style="color:var(--spi)">GPIO 13 — MISO</span>
+        <div class="pin-dot" style="background:var(--spi)"></div>
+        <div class="pin-line" style="background:var(--spi)"></div>
+      </div>
+    </div>
+
+    <!-- Chip body -->
+    <div class="chip-body">
+      <div class="chip-title">ESP32-S3</div>
+      <div class="chip-model">N16R8</div>
+      <div class="chip-spec">16 MB Flash · 8 MB PSRAM</div>
+      <div class="chip-spec" style="margin-top:8px;color:#3A4060">────────────</div>
+      <div class="chip-spec">Xtensa LX7 dual-core</div>
+      <div class="chip-spec">240 MHz · Wi-Fi + BLE 5</div>
+      <div class="chip-spec" style="margin-top:8px;color:#3A4060">────────────</div>
+      <div class="chip-spec" style="color:#FFB347">GPIO 19, 20 → USB</div>
+      <div class="chip-spec" style="color:#FFB347">DO NOT USE</div>
+    </div>
+
+    <!-- Right pins -->
+    <div class="pin-col-right">
+      <div class="pin-row">
+        <div class="pin-line" style="background:var(--gpio)"></div>
+        <div class="pin-dot" style="background:var(--gpio)"></div>
+        <span class="pin-label" style="color:var(--gpio)">GPIO 0 — BOOT / Lid</span>
+      </div>
+      <div class="pin-row">
+        <div class="pin-line" style="background:var(--gpio)"></div>
+        <div class="pin-dot" style="background:var(--gpio)"></div>
+        <span class="pin-label" style="color:var(--gpio)">GPIO 14 — BTN UP</span>
+      </div>
+      <div class="pin-row">
+        <div class="pin-line" style="background:var(--gpio)"></div>
+        <div class="pin-dot" style="background:var(--gpio)"></div>
+        <span class="pin-label" style="color:var(--gpio)">GPIO 15 — BTN SELECT</span>
+      </div>
+      <div class="pin-row">
+        <div class="pin-line" style="background:var(--gpio)"></div>
+        <div class="pin-dot" style="background:var(--gpio)"></div>
+        <span class="pin-label" style="color:var(--gpio)">GPIO 16 — BTN BACK</span>
+      </div>
+      <div class="pin-row">
+        <div class="pin-line" style="background:var(--usb)"></div>
+        <div class="pin-dot" style="background:var(--usb)"></div>
+        <span class="pin-label" style="color:var(--usb)">GPIO 19 — USB D− ⚠</span>
+      </div>
+      <div class="pin-row">
+        <div class="pin-line" style="background:var(--usb)"></div>
+        <div class="pin-dot" style="background:var(--usb)"></div>
+        <span class="pin-label" style="color:var(--usb)">GPIO 20 — USB D+ ⚠</span>
+      </div>
+      <div class="pin-row">
+        <div class="pin-line" style="background:var(--rmt)"></div>
+        <div class="pin-dot" style="background:var(--rmt)"></div>
+        <span class="pin-label" style="color:var(--rmt)">GPIO 48 — WS2812B</span>
+      </div>
+      <div class="pin-row">
+        <div class="pin-line" style="background:var(--power)"></div>
+        <div class="pin-dot" style="background:#555"></div>
+        <span class="pin-label" style="color:#555">GND</span>
+      </div>
+      <div class="pin-row">
+        <div class="pin-line" style="background:var(--power)"></div>
+        <div class="pin-dot" style="background:var(--power)"></div>
+        <span class="pin-label" style="color:var(--power)">5V (VBUS)</span>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- ── Interface tables ──────────────────────────────────────────────── -->
+
+<div class="grid">
+
+  <div class="card">
+    <h3><span class="tag tag-spi">SPI</span> &nbsp;Shared Bus — Both PN532s</h3>
+    <table>
+      <tr><th>GPIO</th><th>Signal</th><th>Connects to</th></tr>
+      <tr>
+        <td><span class="gpio-num" style="color:var(--spi)">11</span></td>
+        <td class="signal">MOSI</td>
+        <td class="device">PN532 #1 SDI + PN532 #2 SDI</td>
+      </tr>
+      <tr>
+        <td><span class="gpio-num" style="color:var(--spi)">13</span></td>
+        <td class="signal">MISO</td>
+        <td class="device">PN532 #1 SDO + PN532 #2 SDO</td>
+      </tr>
+      <tr>
+        <td><span class="gpio-num" style="color:var(--spi)">12</span></td>
+        <td class="signal">SCK</td>
+        <td class="device">PN532 #1 SCK + PN532 #2 SCK</td>
+      </tr>
+      <tr>
+        <td><span class="gpio-num" style="color:var(--spi)">10</span></td>
+        <td class="signal">CS #1</td>
+        <td class="device">PN532 #1 SSEL — <em>inner reader</em></td>
+      </tr>
+      <tr>
+        <td><span class="gpio-num" style="color:var(--spi)">9</span></td>
+        <td class="signal">CS #2</td>
+        <td class="device">PN532 #2 SSEL — <em>outer reader</em></td>
+      </tr>
+    </table>
+    <p class="warn">⚠ PN532 SPI mode: pull SEL0=LOW, SEL1=HIGH on each board before power-up. SSEL is active-low.</p>
+  </div>
+
+  <div class="card">
+    <h3><span class="tag tag-i2c">I2C</span> &nbsp;Master Box Only (Phase 2)</h3>
+    <table>
+      <tr><th>GPIO</th><th>Signal</th><th>Connects to</th></tr>
+      <tr>
+        <td><span class="gpio-num" style="color:var(--i2c)">2</span></td>
+        <td class="signal">SDA</td>
+        <td class="device">OLED SSD1306 + MAX17043 fuel gauge</td>
+      </tr>
+      <tr>
+        <td><span class="gpio-num" style="color:var(--i2c)">3</span></td>
+        <td class="signal">SCL</td>
+        <td class="device">OLED SSD1306 + MAX17043 fuel gauge</td>
+      </tr>
+    </table>
+    <p class="warn">⚠ Add 4.7 kΩ pull-ups on SDA and SCL to 3.3V. OLED I2C address: 0x3C. MAX17043: 0x36.</p>
+  </div>
+
+</div>
+
+<div class="grid" style="margin-top:16px">
+
+  <div class="card">
+    <h3><span class="tag tag-gpio">GPIO</span> &nbsp;Lid Trigger + Buttons</h3>
+    <table>
+      <tr><th>GPIO</th><th>Signal</th><th>Notes</th></tr>
+      <tr>
+        <td><span class="gpio-num" style="color:var(--gpio)">0</span></td>
+        <td class="signal">BOOT / Lid</td>
+        <td class="note">Active-low. Pulled high internally. Short to GND = lid open. Wake source for deep sleep.</td>
+      </tr>
+      <tr>
+        <td><span class="gpio-num" style="color:var(--gpio)">4</span></td>
+        <td class="signal">SR04 TRIG</td>
+        <td class="note">Proto lid sensor. Output, active HIGH pulse.</td>
+      </tr>
+      <tr>
+        <td><span class="gpio-num" style="color:var(--gpio)">5</span></td>
+        <td class="signal">SR04 ECHO</td>
+        <td class="note">Proto lid sensor. Input, HIGH = object detected.</td>
+      </tr>
+      <tr>
+        <td><span class="gpio-num" style="color:var(--gpio)">14</span></td>
+        <td class="signal">BTN UP</td>
+        <td class="note">Master box only. Pull-up + momentary to GND.</td>
+      </tr>
+      <tr>
+        <td><span class="gpio-num" style="color:var(--gpio)">15</span></td>
+        <td class="signal">BTN SELECT</td>
+        <td class="note">Master box only. Pull-up + momentary to GND.</td>
+      </tr>
+      <tr>
+        <td><span class="gpio-num" style="color:var(--gpio)">16</span></td>
+        <td class="signal">BTN BACK</td>
+        <td class="note">Master box only. Pull-up + momentary to GND.</td>
+      </tr>
+    </table>
+  </div>
+
+  <div class="card">
+    <h3><span class="tag tag-rmt">RMT</span> &nbsp;WS2812B LED</h3>
+    <table>
+      <tr><th>GPIO</th><th>Signal</th><th>Notes</th></tr>
+      <tr>
+        <td><span class="gpio-num" style="color:var(--rmt)">48</span></td>
+        <td class="signal">WS2812B DIN</td>
+        <td class="note">Onboard LED. ESP-IDF RMT peripheral. 5V logic preferred — add level shifter if LED glitches at 3.3V.</td>
+      </tr>
+    </table>
+
+    <div style="margin-top: 12px;">
+      <h3 style="margin-bottom:8px">LED Color Contract</h3>
+      <div class="led-row">
+        <div class="led-dot" style="background:#00FF00"></div>
+        <div class="led-event">Item inserted</div>
+        <div class="led-pattern">Green single pulse</div>
+      </div>
+      <div class="led-row">
+        <div class="led-dot" style="background:#FF2222"></div>
+        <div class="led-event">Item extracted</div>
+        <div class="led-pattern">Red single pulse</div>
+      </div>
+      <div class="led-row">
+        <div class="led-dot" style="background:#FFFF00"></div>
+        <div class="led-event">AMBIGUOUS scan</div>
+        <div class="led-pattern">Yellow single flash</div>
+      </div>
+      <div class="led-row">
+        <div class="led-dot" style="background:#00FF00; box-shadow:0 0 6px #00FF00"></div>
+        <div class="led-event">Registration pass</div>
+        <div class="led-pattern">Solid green 2s</div>
+      </div>
+      <div class="led-row">
+        <div class="led-dot" style="background:#FF2222"></div>
+        <div class="led-event">Registration fail (write error)</div>
+        <div class="led-pattern">Red double-flash</div>
+      </div>
+      <div class="led-row">
+        <div class="led-dot" style="background:#4444FF"></div>
+        <div class="led-event">Mesh disconnected</div>
+        <div class="led-pattern">Blue slow breathing</div>
+      </div>
+      <div class="led-row">
+        <div class="led-dot" style="background:#FFFFFF; opacity:0.4"></div>
+        <div class="led-event">BLE connected, idle</div>
+        <div class="led-pattern">White dim pulse / 3s</div>
+      </div>
+      <div class="led-row">
+        <div class="led-dot" style="background:#111"></div>
+        <div class="led-event">Deep sleep</div>
+        <div class="led-pattern">Off</div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<!-- ── Component list ────────────────────────────────────────────────── -->
+
+<h2>Components</h2>
+<div class="comp-grid">
+
+  <div class="comp-card">
+    <h4>ESP32-S3 N16R8 <span class="scope-badge phase1">Phase 1</span></h4>
+    <div class="part">MCU</div>
+    <div class="pins">
+      Power: <span>3.3V + GND</span><br>
+      Flash via: <span>USB-C (GPIO 19/20)</span><br>
+      Note: <span>Deep sleep via GPIO0 EXT0 wake</span>
+    </div>
+  </div>
+
+  <div class="comp-card">
+    <h4>PN532 #1 (Inner) <span class="scope-badge phase1">Phase 1</span></h4>
+    <div class="part">NFC Reader · 13.56 MHz</div>
+    <div class="pins">
+      MOSI: <span>GPIO 11</span> · MISO: <span>GPIO 13</span><br>
+      SCK: <span>GPIO 12</span> · CS: <span>GPIO 10</span><br>
+      SEL0: <span>LOW</span> · SEL1: <span>HIGH</span> (SPI mode)<br>
+      Power: <span>3.3V + GND</span>
+    </div>
+  </div>
+
+  <div class="comp-card">
+    <h4>PN532 #2 (Outer) <span class="scope-badge phase1">Phase 1</span></h4>
+    <div class="part">NFC Reader · 13.56 MHz</div>
+    <div class="pins">
+      MOSI: <span>GPIO 11</span> · MISO: <span>GPIO 13</span><br>
+      SCK: <span>GPIO 12</span> · CS: <span>GPIO 9</span><br>
+      SEL0: <span>LOW</span> · SEL1: <span>HIGH</span> (SPI mode)<br>
+      Power: <span>3.3V + GND</span>
+    </div>
+  </div>
+
+  <div class="comp-card">
+    <h4>NTAG213 Tags <span class="scope-badge phase1">Phase 1</span></h4>
+    <div class="part">NFC Tags · passive</div>
+    <div class="pins">
+      Frequency: <span>13.56 MHz</span><br>
+      Memory: <span>144 bytes user</span><br>
+      Name stored as: <span>NDEF text record</span><br>
+      UID: <span>7 bytes → 14 hex chars</span>
+    </div>
+  </div>
+
+  <div class="comp-card">
+    <h4>WS2812B LED <span class="scope-badge phase1">Phase 1</span></h4>
+    <div class="part">Onboard RGB LED</div>
+    <div class="pins">
+      DIN: <span>GPIO 48 (RMT)</span><br>
+      Power: <span>5V preferred (or 3.3V with shifter)</span><br>
+      Driver: <span>ESP-IDF RMT peripheral</span>
+    </div>
+  </div>
+
+  <div class="comp-card">
+    <h4>HC-SR04 <span class="scope-badge proto">Proto</span></h4>
+    <div class="part">Ultrasonic distance (lid sensor)</div>
+    <div class="pins">
+      TRIG: <span>GPIO 4</span><br>
+      ECHO: <span>GPIO 5</span><br>
+      Power: <span>5V + GND</span><br>
+      Note: <span>ECHO output is 5V — use voltage divider to 3.3V</span>
+    </div>
+  </div>
+
+  <div class="comp-card">
+    <h4>OLED SSD1306 0.96" <span class="scope-badge phase2">Phase 2</span></h4>
+    <div class="part">Master box display</div>
+    <div class="pins">
+      SDA: <span>GPIO 2</span> · SCL: <span>GPIO 3</span><br>
+      I2C addr: <span>0x3C</span><br>
+      Power: <span>3.3V + GND</span><br>
+      Pull-ups: <span>4.7 kΩ to 3.3V</span>
+    </div>
+  </div>
+
+  <div class="comp-card">
+    <h4>Tactile Buttons ×3 <span class="scope-badge phase2">Phase 2</span></h4>
+    <div class="part">Master box navigation</div>
+    <div class="pins">
+      UP: <span>GPIO 14</span><br>
+      SELECT: <span>GPIO 15</span><br>
+      BACK: <span>GPIO 16</span><br>
+      Wiring: <span>Momentary to GND, internal pull-up</span>
+    </div>
+  </div>
+
+  <div class="comp-card">
+    <h4>LiPo 2000 mAh <span class="scope-badge phase2">Phase 2</span></h4>
+    <div class="part">TP4056 charger + MAX17043 gauge</div>
+    <div class="pins">
+      Gauge SDA: <span>GPIO 2</span> · SCL: <span>GPIO 3</span><br>
+      Gauge I2C addr: <span>0x36</span><br>
+      Note: <span>Deep sleep target &lt; 100 µA</span>
+    </div>
+  </div>
+
+</div>
+
+<!-- ── Directional scan logic ────────────────────────────────────────── -->
+
+<hr>
+<h2>Directional NFC — Turnstile Logic</h2>
+
+<div class="card" style="max-width:600px">
+  <table>
+    <tr><th>Reader #1 (inner)</th><th>Reader #2 (outer)</th><th>Window</th><th>Result</th></tr>
+    <tr>
+      <td style="color:var(--spi)">fires first</td>
+      <td>fires within 200 ms</td>
+      <td>✓</td>
+      <td style="color:#50C878">INSERT</td>
+    </tr>
+    <tr>
+      <td>fires within 200 ms</td>
+      <td style="color:var(--spi)">fires first</td>
+      <td>✓</td>
+      <td style="color:#FF6B6B">EXTRACT</td>
+    </tr>
+    <tr>
+      <td colspan="2">Only one reader fires</td>
+      <td>expires</td>
+      <td style="color:#FFB347">AMBIGUOUS</td>
+    </tr>
+    <tr>
+      <td colspan="2">Second reader fires after window</td>
+      <td>expired</td>
+      <td style="color:#FFB347">AMBIGUOUS → new pending</td>
+    </tr>
+  </table>
+  <p class="warn">⚠ Reader #1 = inner (box interior side). Reader #2 = outer (box opening side). Physical placement matters for correct direction.</p>
+</div>
+
+<!-- ── Image gen prompt ──────────────────────────────────────────────── -->
+
+<hr>
+<h2>Image Generation Prompt — Hardware Wiring Illustration</h2>
+
+<p style="color:var(--muted);font-size:11px;margin-bottom:10px">
+  Paste the prompt below into Midjourney, DALL-E 3, or Stable Diffusion XL.
+</p>
+
+<div class="prompt-box" id="promptText">Technical electronics wiring diagram illustration, isometric perspective, dark background (#0F1117). Central component: ESP32-S3 development board with clearly labeled GPIO pins. Two PN532 NFC reader boards connected via shared SPI bus (blue wires: MOSI GPIO11, MISO GPIO13, SCK GPIO12) with separate chip-select lines (green: CS1 GPIO10, CS2 GPIO9). The two NFC readers positioned like a turnstile gate — one inner, one outer — with a small arrow showing an NFC tag passing between them. WS2812B RGB LED connected to GPIO48 via orange wire, glowing green. Clean wire routing with color-coded connections: SPI=blue, I2C=purple, GPIO=green, power=red, GND=dark grey. Component labels in clean monospace font. The two NFC readers slightly offset to show the directional "turnstile" concept with a small INSERT/EXTRACT arrow diagram. Minimal, professional, PCB-schematic aesthetic. Color palette: dark navy background, bright clean component colors, subtle grid overlay. Style: technical illustration, flat design with subtle depth, no photorealism.</div>
+
+<button class="copy-btn" onclick="navigator.clipboard.writeText(document.getElementById('promptText').innerText).then(()=>this.textContent='Copied!').catch(()=>this.textContent='Copy failed')">Copy prompt</button>
+
+<div style="margin-top:28px; color:#4A5568; font-size:10px; text-align:center">
+  inventoryMeshBoxs · ESP32-S3 N16R8 · Phase 1 single-box
+</div>
+
+</body>
+</html>
