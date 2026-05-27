@@ -14,15 +14,8 @@ size_t imb_proto_pack_event_tag(const imb_pkt_event_tag_t *msg, uint8_t *buf, si
 size_t imb_proto_pack_event_mode(const imb_pkt_event_mode_t *msg, uint8_t *buf, size_t max)
     { PACK(msg, buf, max); }
 
-size_t imb_proto_pack_report(const imb_pkt_report_t *msg, uint8_t *buf, size_t max)
-{
-    /* only pack the live portion: header + count entries */
-    size_t used = sizeof(msg->msg_type) + sizeof(msg->count) +
-                  msg->count * sizeof(imb_pkt_report_entry_t);
-    if (max < used) return 0;
-    memcpy(buf, msg, used);
-    return used;
-}
+size_t imb_proto_pack_event_ack(const imb_pkt_event_ack_t *msg, uint8_t *buf, size_t max)
+    { PACK(msg, buf, max); }
 
 size_t imb_proto_pack_cmd_mode(const imb_pkt_cmd_mode_t *msg, uint8_t *buf, size_t max)
     { PACK(msg, buf, max); }
@@ -32,6 +25,22 @@ size_t imb_proto_pack_cmd_name(const imb_pkt_cmd_name_t *msg, uint8_t *buf, size
 
 size_t imb_proto_pack_cmd_accept(const imb_pkt_cmd_accept_t *msg, uint8_t *buf, size_t max)
     { PACK(msg, buf, max); }
+
+size_t imb_proto_pack_cmd_hello(const imb_pkt_cmd_hello_t *msg, uint8_t *buf, size_t max)
+    { PACK(msg, buf, max); }
+
+size_t imb_proto_pack_report_chunk(const imb_pkt_report_chunk_t *msg, const imb_pkt_report_entry_t *entries, uint8_t *buf, size_t max)
+{
+    size_t header_size = sizeof(imb_pkt_report_chunk_t);
+    size_t entries_size = msg->entries_in_chunk * sizeof(imb_pkt_report_entry_t);
+    size_t total_size = header_size + entries_size;
+
+    if (max < total_size) return 0;
+
+    memcpy(buf, msg, header_size);
+    memcpy(buf + header_size, entries, entries_size);
+    return total_size;
+}
 
 /* ── unpack helpers ────────────────────────────────────────────────────── */
 
@@ -45,28 +54,44 @@ int imb_proto_unpack_event_tag(const uint8_t *buf, size_t len, imb_pkt_event_tag
 int imb_proto_unpack_event_mode(const uint8_t *buf, size_t len, imb_pkt_event_mode_t *out)
     { UNPACK(imb_pkt_event_mode_t, IMB_MSG_EVENT_MODE, buf, len, out); }
 
-int imb_proto_unpack_report(const uint8_t *buf, size_t len, imb_pkt_report_t *out)
+int imb_proto_unpack_event_ack(const uint8_t *buf, size_t len, imb_pkt_event_ack_t *out)
+    { UNPACK(imb_pkt_event_ack_t, IMB_MSG_EVENT_ACK, buf, len, out); }
+
+int imb_proto_unpack_cmd_hello(const uint8_t *buf, size_t len, imb_pkt_cmd_hello_t *out)
+    { UNPACK(imb_pkt_cmd_hello_t, IMB_MSG_CMD_HELLO, buf, len, out); }
+
+int imb_proto_unpack_report_chunk(const uint8_t *buf, size_t len, imb_pkt_report_chunk_t *out, imb_pkt_report_entry_t *entries_out)
 {
-    size_t header = sizeof(out->msg_type) + sizeof(out->count);
-    if (len < header || buf[0] != IMB_MSG_REPORT) return -1;
-    memcpy(out, buf, header);
-    size_t expected = header + out->count * sizeof(imb_pkt_report_entry_t);
-    if (len < expected || out->count > IMB_REPORT_MAX_ENTRIES) return -1;
-    memcpy(out, buf, expected);
+    size_t header_size = sizeof(imb_pkt_report_chunk_t);
+    if (len < header_size || buf[0] != IMB_MSG_REPORT_CHUNK) return -1;
+    
+    memcpy(out, buf, header_size);
+    
+    size_t entries_size = out->entries_in_chunk * sizeof(imb_pkt_report_entry_t);
+    if (len < header_size + entries_size) return -1;
+
+    memcpy(entries_out, buf + header_size, entries_size);
     return 0;
 }
 
-int imb_proto_unpack_cmd(const uint8_t *buf, size_t len, imb_cmd_u *out)
+int imb_proto_unpack_cmd(const uint8_t *buf, size_t len, void *out_struct)
 {
     if (len < 1) return -1;
     switch (buf[0]) {
         case IMB_MSG_CMD_MODE:
-            UNPACK(imb_pkt_cmd_mode_t, IMB_MSG_CMD_MODE, buf, len, &out->mode);
+            UNPACK(imb_pkt_cmd_mode_t, IMB_MSG_CMD_MODE, buf, len, (imb_pkt_cmd_mode_t *)out_struct);
+            break;
         case IMB_MSG_CMD_NAME:
-            UNPACK(imb_pkt_cmd_name_t, IMB_MSG_CMD_NAME, buf, len, &out->name);
+            UNPACK(imb_pkt_cmd_name_t, IMB_MSG_CMD_NAME, buf, len, (imb_pkt_cmd_name_t *)out_struct);
+            break;
         case IMB_MSG_CMD_ACCEPT:
-            UNPACK(imb_pkt_cmd_accept_t, IMB_MSG_CMD_ACCEPT, buf, len, &out->accept);
+            UNPACK(imb_pkt_cmd_accept_t, IMB_MSG_CMD_ACCEPT, buf, len, (imb_pkt_cmd_accept_t *)out_struct);
+            break;
+        case IMB_MSG_CMD_HELLO:
+            UNPACK(imb_pkt_cmd_hello_t, IMB_MSG_CMD_HELLO, buf, len, (imb_pkt_cmd_hello_t *)out_struct);
+            break;
         default:
             return -1;
     }
 }
+

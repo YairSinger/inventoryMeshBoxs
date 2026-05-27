@@ -4,6 +4,11 @@
 #include "freertos/task.h"
 #include "driver/gpio.h"
 #include "rom/ets_sys.h"
+#include "nvs_flash.h"
+#include "imb_ble.h"
+#include "esp_log.h"
+
+static const char *TAG = "MAIN";
 
 #define PIN_MOSI  11
 #define PIN_MISO  13
@@ -44,108 +49,141 @@ static void bb_write(int cs_pin, const uint8_t *buf, size_t len)
     gpio_set_level(cs_pin, 1);
 }
 
-static void bb_read(int cs_pin, uint8_t cmd, uint8_t *rx, size_t len)
+static uint8_t bb_read_ex(int cs_pin, uint8_t cmd, uint8_t *rx, size_t len)
 {
     gpio_set_level(cs_pin, 0);
     ets_delay_us(5);
-    bb_byte(cmd);
+    uint8_t opcode_miso = bb_byte(cmd);
     for (size_t i = 0; i < len; i++) rx[i] = bb_byte(0x00);
     ets_delay_us(5);
     gpio_set_level(cs_pin, 1);
+    return opcode_miso;
 }
 
-static int poll_ready(int cs_pin, int num)
+static void bb_read(int cs_pin, uint8_t cmd, uint8_t *rx, size_t len)
 {
-    for (int i = 0; i < 150; i++) {
-        uint8_t status = 0;
-        bb_read(cs_pin, PN532_SPI_STATREAD, &status, 1);
-        if (i < 5 || (i % 20 == 0))
-            printf("[PN532 #%d] status[%d] = 0x%02X\n", num, i, status);
-        if (status == 0x01) return 1;
-        vTaskDelay(pdMS_TO_TICKS(10));
-    }
-    printf("[PN532 #%d] status[last] = (all same)\n", num);
-    return 0;
+    bb_read_ex(cs_pin, cmd, rx, len);
 }
 
 static void probe(int cs_pin, int num)
 {
-    printf("[PN532 #%d] sending GetFirmwareVersion\n", num);
+    printf("[PN532 #%d] == probe start ==\n", num);
+
+    gpio_set_level(cs_pin, 0);
+    vTaskDelay(pdMS_TO_TICKS(2));
+    gpio_set_level(cs_pin, 1);
+    ets_delay_us(1000);
 
     uint8_t wbuf[sizeof(cmd_get_fw) + 1];
     wbuf[0] = PN532_SPI_DATAWRITE;
     memcpy(wbuf + 1, cmd_get_fw, sizeof(cmd_get_fw));
     bb_write(cs_pin, wbuf, sizeof(wbuf));
+    printf("[PN532 #%d] command sent\n", num);
 
-    if (!poll_ready(cs_pin, num)) {
-        printf("[PN532 #%d] FAIL — no ACK\n", num);
-        return;
+    int ready = 0;
+    for (int i = 0; i < 100; i++) {
+        uint8_t opcode_miso = 0, status = 0;
+        opcode_miso = bb_read_ex(cs_pin, PN532_SPI_STATREAD, &status, 1);
+
+        if (status == 0x01) {
+            ready = 1;
+            break;
+        }
+        if (opcode_miso == 0x01) {
+            uint8_t ack_tail[5] = {0};
+            bb_read(cs_pin, PN532_SPI_DATAREAD, ack_tail, 5);
+            ready = 2;
+            break;
+        }
+        vTaskDelay(pdMS_TO_TICKS(10));
     }
 
-    uint8_t ack[6] = {0};
-    bb_read(cs_pin, PN532_SPI_DATAREAD, ack, 6);
-    printf("[PN532 #%d] ack:", num);
-    for (int i = 0; i < 6; i++) printf(" %02X", ack[i]);
-    printf("\n");
+    if (ready == 1) {
+        uint8_t ack[6] = {0};
+        bb_read(cs_pin, PN532_SPI_DATAREAD, ack, 6);
+    }
 
-    if (!poll_ready(cs_pin, num)) {
-        printf("[PN532 #%d] FAIL — no response\n", num);
-        return;
+    for (int i = 0; i < 100; i++) {
+        uint8_t status = 0;
+        bb_read(cs_pin, PN532_SPI_STATREAD, &status, 1);
+        if (status & 0x01) break;
+        vTaskDelay(pdMS_TO_TICKS(5));
     }
 
     uint8_t resp[20] = {0};
     bb_read(cs_pin, PN532_SPI_DATAREAD, resp, 20);
-    printf("[PN532 #%d] raw:", num);
-    for (int i = 0; i < 20; i++) printf(" %02X", resp[i]);
-    printf("\n");
 
-    for (int i = 0; i < 14; i++) {
-        if (resp[i] == 0xD5 && resp[i + 1] == 0x03) {
-            printf("[PN532 #%d] OK  IC=0x%02X  Ver=%d  Rev=%d  Support=0x%02X\n",
-                   num, resp[i + 2], resp[i + 3], resp[i + 4], resp[i + 5]);
+    for (int i = 0; i < 18; i++) {
+        if (resp[i] == 0xD5 && resp[i+1] == 0x03) {
+            printf("[PN532 #%d] OK  IC=0x%02X  Ver=%d  Rev=%d\n",
+                   num, resp[i+2], resp[i+3], resp[i+4]);
             return;
         }
     }
-    printf("[PN532 #%d] FAIL — D5 03 not found\n", num);
+}
+
+static void on_ble_cmd(const imb_cmd_header_t *hdr, const void *payload)
+{
+    ESP_LOGI(TAG, "BLE Command Received: type=0x%02X id=%d", hdr->msg_type, hdr->msg_id);
+    
+    switch (hdr->msg_type) {
+        case IMB_MSG_CMD_MODE: {
+            const imb_pkt_cmd_mode_t *m = (const imb_pkt_cmd_mode_t *)hdr;
+            ESP_LOGI(TAG, "Mode change requested: %d", m->mode);
+            imb_ble_set_mode((imb_op_mode_e)m->mode);
+            imb_ble_send_ack(hdr->msg_id, hdr->msg_type, IMB_ACK_OK);
+            break;
+        }
+        default:
+            ESP_LOGW(TAG, "Unhandled command: 0x%02X", hdr->msg_type);
+            imb_ble_send_ack(hdr->msg_id, hdr->msg_type, IMB_ACK_OK);
+            break;
+    }
 }
 
 void app_main(void)
 {
-    printf("\n=== Phase 0 SPI smoke test (bit-bang) ===\n");
+    esp_err_t ret = nvs_flash_init();
+    if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        ESP_ERROR_CHECK(nvs_flash_erase());
+        ret = nvs_flash_init();
+    }
+    ESP_ERROR_CHECK(ret);
 
+    ESP_LOGI(TAG, "Initializing BLE...");
+    imb_ble_config_t ble_cfg = {
+        .box_name = "Kitchen",
+        .pin_hash = 0x12345678, /* matches phone test */
+        .initial_mode = IMB_MODE_FIELD_CHECK,
+        .on_cmd = on_ble_cmd
+    };
+    ESP_ERROR_CHECK(imb_ble_init(&ble_cfg));
+
+    /* GPIO Setup for PN532 */
     gpio_config_t out_cfg = {
         .pin_bit_mask  = (1ULL << PIN_MOSI) | (1ULL << PIN_SCK)
                        | (1ULL << PIN_CS1)  | (1ULL << PIN_CS2),
         .mode          = GPIO_MODE_OUTPUT,
-        .pull_up_en    = GPIO_PULLUP_DISABLE,
-        .pull_down_en  = GPIO_PULLDOWN_DISABLE,
-        .intr_type     = GPIO_INTR_DISABLE,
     };
     gpio_config(&out_cfg);
 
     gpio_config_t in_cfg = {
         .pin_bit_mask  = (1ULL << PIN_MISO),
         .mode          = GPIO_MODE_INPUT,
-        .pull_up_en    = GPIO_PULLUP_DISABLE,
-        .pull_down_en  = GPIO_PULLDOWN_DISABLE,
-        .intr_type     = GPIO_INTR_DISABLE,
+        .pull_up_en    = GPIO_PULLUP_ENABLE,
     };
     gpio_config(&in_cfg);
 
-    gpio_set_level(PIN_CS1,  1);
-    gpio_set_level(PIN_CS2,  1);
-    gpio_set_level(PIN_SCK,  0);
-    gpio_set_level(PIN_MOSI, 0);
+    gpio_set_level(PIN_CS1, 1);
+    gpio_set_level(PIN_CS2, 1);
 
-    printf("GPIO init done — MISO raw = %d\n", gpio_get_level(PIN_MISO));
-
-    vTaskDelay(pdMS_TO_TICKS(2000));
-
-    printf("MISO after 2s delay = %d\n", gpio_get_level(PIN_MISO));
-
+    vTaskDelay(pdMS_TO_TICKS(1000));
     probe(PIN_CS1, 1);
-    vTaskDelay(pdMS_TO_TICKS(200));
     probe(PIN_CS2, 2);
 
-    printf("=== Done ===\n");
+    ESP_LOGI(TAG, "System Ready. Waiting for BLE connection...");
+    
+    while (1) {
+        vTaskDelay(pdMS_TO_TICKS(1000));
+    }
 }

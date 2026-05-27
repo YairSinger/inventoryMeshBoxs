@@ -13,19 +13,22 @@
 - `idf_monitor` requires interactive TTY; use `python3 /tmp/read_serial.py` script instead (see dev-setup skill)
 - After running host tests, `sdkconfig` gets reset to `linux` target → run `idf.py set-target esp32s3` before hardware builds
 - Flash size warning (`16384k vs 2048k`) is harmless; fix later via menuconfig
-- **Power matters**: both PN532s wired to the same ESP 3V3 pin produced dirty bus (MISO `10 10...` on #1). Splitting power across two 3V3 pins cleaned the bus.
-- **Bit order**: tried both MSB-first and LSB-first with LSB flag — no difference in this state. Reverted to MSB-first. Likely irrelevant until SPI mode is confirmed.
-- **SW1/SW2 jumper combo unknown for our specific boards** — TASKS.md previously claimed `SW1=0,SW2=1` works, but that was never confirmed by seeing a real `D5 03` response. Worth checking silkscreen labels next session.
+- **Power matters**: both PN532s wired to the same ESP 3V3 pin produced dirty bus. Splitting power across two 3V3 pins required.
+- **Jumpers corrected (2026-05-27)**: SW1→I0, SW2→I1. PN532 Table 44: I1=1,I0=0 = SPI. Therefore SPI = SW1=0V (I0=0), SW2=3.3V (I1=1). Earlier "correction" to both-0V was wrong — that is HSU/UART mode. Original dev-setup note (SW2=HIGH for SPI) was correct.
+- **Bit order**: PN532 is natively LSB-first. These boards have NO bit-reversal circuit. ESP-IDF `SPI_DEVICE_BIT_LSBFIRST` did NOT work (all-0x00 status). Bit-bang LSB-first is the working approach.
+- **ESP-IDF hardware SPI does not work** for these chips — use bit-bang (see `main/main.c`). Root cause unclear (GPIO sleep isolation or DMA alignment suspected).
+- **Do NOT poll STATREAD before sending a command** — it will always be 0x00. Correct flow: send command → poll → read ACK → poll → read response.
+- **PN532 needs 2s boot delay** and chips must be **power-cycled** (disconnect 3V3) between ESP resets for consistent behavior.
 
-### Last state (2026-05-27, paused to focus on BLE)
-- Both PN532s on bus, both MISO read clean idle `FF FF FF…` after split-power + new wires
-- Neither chip drives MISO in response to `GetFirmwareVersion` (`00 00 FF 02 FE D4 02 2A 00`)
-- Conclusion: chips are powered + on the bus but **not in SPI mode**, or not receiving SCK/MOSI
-- Next time: physically verify SW1/SW2 jumper positions against board silkscreen; measure 3.3V at both VCC pads; consider scope/LA capture of SCK + MOSI at PN532 input pin to confirm signals arrive
+### Last state (2026-05-27) ✅ RESOLVED
+- Both PN532s confirmed: `IC=0x32 Ver=1 Rev=6 Support=0x07`
+- Root cause of all prior failures: SW2 must be HIGH (3.3V) for SPI mode; both-0V = HSU/UART
+- Firmware: bit-bang LSB-first, MISO pull-up, wakeup pulse (`main/main.c`)
+- **Next**: read NTAG213 UID via `InListPassiveTarget` on each reader
 
 ### Tasks
-- [ ] PN532 #1 (CS GPIO10): verify `GetFirmwareVersion` returns `IC=0x32 Ver=1` — **paused**, suspect SW1/SW2 jumper combo
-- [ ] PN532 #2 (CS GPIO9): verify `GetFirmwareVersion` — **paused**, same suspicion
+- [x] PN532 #1 (CS GPIO10): `GetFirmwareVersion` → `IC=0x32 Ver=1 Rev=6 Support=0x07` ✅ (2026-05-27)
+- [x] PN532 #2 (CS GPIO9): `GetFirmwareVersion` → `IC=0x32 Ver=1 Rev=6 Support=0x07` ✅ (2026-05-27)
 - [ ] WS2812B RMT driver: cycles through LED color contract (GPIO 48)
 - [ ] Deep sleep + BOOT button wake: GPIO 0 wakes from deep sleep
 - [ ] NVS driver: write + read + erase `imb_local` namespace

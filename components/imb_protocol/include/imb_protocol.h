@@ -128,3 +128,28 @@ typedef struct __attribute__((packed)) {
 #define IMB_CHAR_EVENT_NOTIFY   "e5d50001-01d0-47e0-afc5-01e466d9298e"
 #define IMB_CHAR_REPORT_NOTIFY  "e5d50002-01d0-47e0-afc5-01e466d9298e"
 #define IMB_CHAR_COMMAND_WRITE  "e5d50003-01d0-47e0-afc5-01e466d9298e"
+
+/* ── Pack functions ────────────────────────────────────────────────────── */
+/* All return bytes written into buf, or 0 if buf is too small (max < sizeof msg). */
+
+size_t imb_proto_pack_event_tag    (const imb_pkt_event_tag_t  *msg, uint8_t *buf, size_t max);
+size_t imb_proto_pack_event_mode   (const imb_pkt_event_mode_t *msg, uint8_t *buf, size_t max);
+size_t imb_proto_pack_event_ack    (const imb_pkt_event_ack_t  *msg, uint8_t *buf, size_t max);
+size_t imb_proto_pack_report_chunk (const imb_pkt_report_chunk_t *msg, const imb_pkt_report_entry_t *entries, uint8_t *buf, size_t max);
+size_t imb_proto_pack_cmd_mode     (const imb_pkt_cmd_mode_t   *msg, uint8_t *buf, size_t max);
+size_t imb_proto_pack_cmd_name     (const imb_pkt_cmd_name_t   *msg, uint8_t *buf, size_t max);
+size_t imb_proto_pack_cmd_accept   (const imb_pkt_cmd_accept_t *msg, uint8_t *buf, size_t max);
+size_t imb_proto_pack_cmd_hello    (const imb_pkt_cmd_hello_t  *msg, uint8_t *buf, size_t max);
+
+/* ── Unpack functions ──────────────────────────────────────────────────── */
+/* All return 0 on success, -1 on wrong msg_type or truncated buffer. */
+
+int imb_proto_unpack_event_tag    (const uint8_t *buf, size_t len, imb_pkt_event_tag_t  *out);
+int imb_proto_unpack_event_mode   (const uint8_t *buf, size_t len, imb_pkt_event_mode_t *out);
+int imb_proto_unpack_event_ack    (const uint8_t *buf, size_t len, imb_pkt_event_ack_t  *out);
+int imb_proto_unpack_cmd_hello    (const uint8_t *buf, size_t len, imb_pkt_cmd_hello_t  *out);
+int imb_proto_unpack_report_chunk (const uint8_t *buf, size_t len, imb_pkt_report_chunk_t *out, imb_pkt_report_entry_t *entries_out);
+
+/* Dispatches on buf[0] (msg_type); populates the matching union member.
+   Returns -1 if msg_type is not a known CMD type or buffer is truncated. */
+int imb_proto_unpack_cmd(const uint8_t *buf, size_t len, void *out_struct);

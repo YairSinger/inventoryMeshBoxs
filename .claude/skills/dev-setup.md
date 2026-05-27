@@ -139,8 +139,8 @@ Install pyserial if needed: `pip3 install pyserial`
 
 ## PN532 SPI notes (discovered during bringup)
 
-- **Mode jumpers**: this board uses SW1/SW2 which map to I0/I1. SPI = SW1=0, SW2=0 (both 0V). I2C = SW1=1, SW2=0. HSU = SW1=0, SW2=1. Verify with multimeter: probe I0 and I1 pads — SPI needs both at 0V.
-- **MSB-first**: despite the PN532 datasheet saying "LSB first", all working libraries use standard SPI MSB-first. Do NOT set `SPI_DEVICE_BIT_LSBFIRST` — it garbles communication.
+- **Mode jumpers**: SW1 maps to I0, SW2 maps to I1. PN532 datasheet Table 44: I1=1,I0=0 → SPI; I1=0,I0=1 → I2C; I1=0,I0=0 → HSU. Therefore: **SPI = SW1=0V, SW2=3.3V**. I2C = SW1=3.3V, SW2=0V. HSU = both 0V. Must power-cycle chips after changing jumpers — mode is latched at power-on.
+- **LSB-first**: PN532 is natively LSB-first. These boards have no bit-reversal circuit. Use bit-bang LSB-first (see main/main.c). ESP-IDF hardware SPI does not work.
 - **Wakeup**: assert CS (SS) low for ≥5ms with no clock before sending the first command. Use manual GPIO CS (`spics_io_num = -1`) to do this properly.
 - **Clock**: 500kHz for bringup; can increase to 1MHz+ once verified.
 - **Flash size warning**: `W spi_flash: Detected size(16384k) larger than binary header(2048k)` is harmless — fix by setting flash size to 16MB in menuconfig (`CONFIG_ESPTOOLPY_FLASHSIZE_16MB`).
