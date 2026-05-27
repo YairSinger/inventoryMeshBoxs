@@ -154,9 +154,17 @@ If the delta is empty (nothing changed since last check), the box stays silent â
 
 ## 4. Wire protocol (recap + additions)
 
-Most struct definitions live in `imb_protocol.h`. Below is the **complete final message list**, including new messages added during this design phase. Items marked **[NEW]** are not yet in the source file.
+All wire-level message struct definitions live in [`components/imb_protocol/include/imb_protocol.h`](../components/imb_protocol/include/imb_protocol.h). 
 
-### 4.1 Message types
+### 4.1 Consuming the Protocol (Phone Side)
+
+The phone app MUST NOT manually redefine these structs. Instead:
+1.  **Add Submodule**: Add this repository as a submodule to your project.
+    `git submodule add https://github.com/your-org/inventoryMeshBoxs.git protocol`
+2.  **Generate Models**: Use the provided script (see phone repo `scripts/gen_protocol.py`) to generate Dart/Kotlin classes directly from the C headers.
+3.  **Sync**: When the protocol changes, run `git submodule update --remote` and re-run the generator.
+
+### 4.2 Message types
 
 | Type byte | Name | Direction | Notes |
 |---|---|---|---|

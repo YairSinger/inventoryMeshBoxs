@@ -21,6 +21,15 @@ Detailed design + reference docs in `docs/`. Read on demand, not eagerly:
 | [`docs/testing.md`](docs/testing.md) | Two-layer test architecture, HAL pattern, toolchain commands, host vs on-device |
 | [`TASKS.md`](TASKS.md) | Active work tracking by phase |
 
+## Shared Protocol Strategy (Contract as Code)
+
+To prevent drift between the firmware (C) and phone app (Flutter/Dart), we use a **Single Source of Truth** pattern:
+
+1.  **Source of Truth**: `components/imb_protocol/include/imb_protocol.h` defines all wire-level structs.
+2.  **Consumption**: The phone repository includes this firmware repository as a **Git Submodule** (under `assets/protocol` or similar).
+3.  **Code Generation**: A script in the phone repository parses the C headers to generate Dart model classes.
+4.  **Enforcement**: Changes to the protocol MUST be made in the firmware repo first, then pulled into the phone repo via submodule update.
+
 ## Hot rules (always apply, no need to open subdocs)
 
 - **`imb_local` NVS is ground truth.** Never derive item presence from `imb_mesh` when local data exists.

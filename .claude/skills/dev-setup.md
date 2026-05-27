@@ -139,7 +139,7 @@ Install pyserial if needed: `pip3 install pyserial`
 
 ## PN532 SPI notes (discovered during bringup)
 
-- **Mode jumpers**: this board uses SW1/SW2. SPI = SW1=0, SW2=1. HSU = 0,0. I2C = 1,0.
+- **Mode jumpers**: this board uses SW1/SW2 which map to I0/I1. SPI = SW1=0, SW2=0 (both 0V). I2C = SW1=1, SW2=0. HSU = SW1=0, SW2=1. Verify with multimeter: probe I0 and I1 pads — SPI needs both at 0V.
 - **MSB-first**: despite the PN532 datasheet saying "LSB first", all working libraries use standard SPI MSB-first. Do NOT set `SPI_DEVICE_BIT_LSBFIRST` — it garbles communication.
 - **Wakeup**: assert CS (SS) low for ≥5ms with no clock before sending the first command. Use manual GPIO CS (`spics_io_num = -1`) to do this properly.
 - **Clock**: 500kHz for bringup; can increase to 1MHz+ once verified.

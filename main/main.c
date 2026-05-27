@@ -2,8 +2,8 @@
 #include <string.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "driver/spi_master.h"
 #include "driver/gpio.h"
+#include "rom/ets_sys.h"
 
 #define PIN_MOSI  11
 #define PIN_MISO  13
@@ -15,51 +15,86 @@
 #define PN532_SPI_DATAWRITE 0x01
 #define PN532_SPI_DATAREAD  0x03
 
-static spi_device_handle_t spi;
-
 static const uint8_t cmd_get_fw[] = {
     0x00, 0x00, 0xFF, 0x02, 0xFE, 0xD4, 0x02, 0x2A, 0x00
 };
 
-static void spi_txrx(uint8_t *tx, uint8_t *rx, size_t len)
+/* bit-bang SPI, LSB-first, mode 0 (PN532 native) */
+static uint8_t bb_byte(uint8_t out)
 {
-    spi_transaction_t t = {
-        .length    = len * 8,
-        .tx_buffer = tx,
-        .rx_buffer = rx,
-    };
-    spi_device_polling_transmit(spi, &t);
+    uint8_t in = 0;
+    for (int i = 0; i < 8; i++) {
+        gpio_set_level(PIN_MOSI, (out >> i) & 1);
+        ets_delay_us(2);
+        gpio_set_level(PIN_SCK, 1);
+        ets_delay_us(2);
+        if (gpio_get_level(PIN_MISO)) in |= (1 << i);
+        gpio_set_level(PIN_SCK, 0);
+        ets_delay_us(2);
+    }
+    return in;
+}
+
+static void bb_write(int cs_pin, const uint8_t *buf, size_t len)
+{
+    gpio_set_level(cs_pin, 0);
+    ets_delay_us(5);
+    for (size_t i = 0; i < len; i++) bb_byte(buf[i]);
+    ets_delay_us(5);
+    gpio_set_level(cs_pin, 1);
+}
+
+static void bb_read(int cs_pin, uint8_t cmd, uint8_t *rx, size_t len)
+{
+    gpio_set_level(cs_pin, 0);
+    ets_delay_us(5);
+    bb_byte(cmd);
+    for (size_t i = 0; i < len; i++) rx[i] = bb_byte(0x00);
+    ets_delay_us(5);
+    gpio_set_level(cs_pin, 1);
+}
+
+static int poll_ready(int cs_pin, int num)
+{
+    for (int i = 0; i < 150; i++) {
+        uint8_t status = 0;
+        bb_read(cs_pin, PN532_SPI_STATREAD, &status, 1);
+        if (i < 5 || (i % 20 == 0))
+            printf("[PN532 #%d] status[%d] = 0x%02X\n", num, i, status);
+        if (status == 0x01) return 1;
+        vTaskDelay(pdMS_TO_TICKS(10));
+    }
+    printf("[PN532 #%d] status[last] = (all same)\n", num);
+    return 0;
 }
 
 static void probe(int cs_pin, int num)
 {
-    printf("[PN532 #%d] wakeup + GetFirmwareVersion\n", num);
+    printf("[PN532 #%d] sending GetFirmwareVersion\n", num);
 
-    /* wakeup: hold SS low for 5ms with NO clock, then release */
-    gpio_set_level(cs_pin, 0);
-    vTaskDelay(pdMS_TO_TICKS(5));
-    gpio_set_level(cs_pin, 1);
-    vTaskDelay(pdMS_TO_TICKS(2));
-
-    /* send command frame */
     uint8_t wbuf[sizeof(cmd_get_fw) + 1];
     wbuf[0] = PN532_SPI_DATAWRITE;
     memcpy(wbuf + 1, cmd_get_fw, sizeof(cmd_get_fw));
-    gpio_set_level(cs_pin, 0);
-    spi_txrx(wbuf, NULL, sizeof(wbuf));
-    gpio_set_level(cs_pin, 1);
+    bb_write(cs_pin, wbuf, sizeof(wbuf));
 
-    /* skip status check — just wait 500ms and read directly */
-    vTaskDelay(pdMS_TO_TICKS(500));
+    if (!poll_ready(cs_pin, num)) {
+        printf("[PN532 #%d] FAIL — no ACK\n", num);
+        return;
+    }
 
-    /* read response */
-    uint8_t dr = PN532_SPI_DATAREAD;
+    uint8_t ack[6] = {0};
+    bb_read(cs_pin, PN532_SPI_DATAREAD, ack, 6);
+    printf("[PN532 #%d] ack:", num);
+    for (int i = 0; i < 6; i++) printf(" %02X", ack[i]);
+    printf("\n");
+
+    if (!poll_ready(cs_pin, num)) {
+        printf("[PN532 #%d] FAIL — no response\n", num);
+        return;
+    }
+
     uint8_t resp[20] = {0};
-    gpio_set_level(cs_pin, 0);
-    spi_txrx(&dr, NULL, 1);
-    spi_txrx(NULL, resp, 20);
-    gpio_set_level(cs_pin, 1);
-
+    bb_read(cs_pin, PN532_SPI_DATAREAD, resp, 20);
     printf("[PN532 #%d] raw:", num);
     for (int i = 0; i < 20; i++) printf(" %02X", resp[i]);
     printf("\n");
@@ -76,43 +111,40 @@ static void probe(int cs_pin, int num)
 
 void app_main(void)
 {
-    printf("\n=== Phase 0 SPI smoke test (manual CS) ===\n");
+    printf("\n=== Phase 0 SPI smoke test (bit-bang) ===\n");
 
-    /* CS pins as plain GPIO outputs, default HIGH (deselected) */
-    gpio_config_t cs_cfg = {
-        .pin_bit_mask  = (1ULL << PIN_CS1) | (1ULL << PIN_CS2),
+    gpio_config_t out_cfg = {
+        .pin_bit_mask  = (1ULL << PIN_MOSI) | (1ULL << PIN_SCK)
+                       | (1ULL << PIN_CS1)  | (1ULL << PIN_CS2),
         .mode          = GPIO_MODE_OUTPUT,
         .pull_up_en    = GPIO_PULLUP_DISABLE,
         .pull_down_en  = GPIO_PULLDOWN_DISABLE,
         .intr_type     = GPIO_INTR_DISABLE,
     };
-    gpio_config(&cs_cfg);
-    gpio_set_level(PIN_CS1, 1);
-    gpio_set_level(PIN_CS2, 1);
+    gpio_config(&out_cfg);
 
-    /* SPI bus — no auto-CS (spics_io_num = -1) */
-    spi_bus_config_t bus = {
-        .mosi_io_num   = PIN_MOSI,
-        .miso_io_num   = PIN_MISO,
-        .sclk_io_num   = PIN_SCK,
-        .quadwp_io_num = -1,
-        .quadhd_io_num = -1,
+    gpio_config_t in_cfg = {
+        .pin_bit_mask  = (1ULL << PIN_MISO),
+        .mode          = GPIO_MODE_INPUT,
+        .pull_up_en    = GPIO_PULLUP_DISABLE,
+        .pull_down_en  = GPIO_PULLDOWN_DISABLE,
+        .intr_type     = GPIO_INTR_DISABLE,
     };
-    ESP_ERROR_CHECK(spi_bus_initialize(SPI2_HOST, &bus, SPI_DMA_CH_AUTO));
+    gpio_config(&in_cfg);
 
-    spi_device_interface_config_t cfg = {
-        .clock_speed_hz = 500000,          /* 500 kHz — slow for bringup */
-        .mode           = 0,               /* CPOL=0 CPHA=0 */
-        .spics_io_num   = -1,              /* manual CS */
-        .queue_size     = 1,
-        .flags          = 0,  /* MSB-first; some PN532 clones bit-reverse internally */
-    };
-    ESP_ERROR_CHECK(spi_bus_add_device(SPI2_HOST, &cfg, &spi));
+    gpio_set_level(PIN_CS1,  1);
+    gpio_set_level(PIN_CS2,  1);
+    gpio_set_level(PIN_SCK,  0);
+    gpio_set_level(PIN_MOSI, 0);
 
-    vTaskDelay(pdMS_TO_TICKS(1000));       /* PN532 power-on time */
+    printf("GPIO init done — MISO raw = %d\n", gpio_get_level(PIN_MISO));
+
+    vTaskDelay(pdMS_TO_TICKS(2000));
+
+    printf("MISO after 2s delay = %d\n", gpio_get_level(PIN_MISO));
 
     probe(PIN_CS1, 1);
-    vTaskDelay(pdMS_TO_TICKS(100));
+    vTaskDelay(pdMS_TO_TICKS(200));
     probe(PIN_CS2, 2);
 
     printf("=== Done ===\n");
