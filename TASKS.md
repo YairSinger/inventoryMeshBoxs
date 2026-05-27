@@ -29,6 +29,7 @@
 ### Tasks
 - [x] PN532 #1 (CS GPIO10): `GetFirmwareVersion` → `IC=0x32 Ver=1 Rev=6 Support=0x07` ✅ (2026-05-27)
 - [x] PN532 #2 (CS GPIO9): `GetFirmwareVersion` → `IC=0x32 Ver=1 Rev=6 Support=0x07` ✅ (2026-05-27)
+- [ ] PN532 #1 + #2: read NTAG213 UID via `InListPassiveTarget` — **IN PROGRESS** (firmware flashed, awaiting tag test)
 - [ ] WS2812B RMT driver: cycles through LED color contract (GPIO 48)
 - [ ] Deep sleep + BOOT button wake: GPIO 0 wakes from deep sleep
 - [ ] NVS driver: write + read + erase `imb_local` namespace
