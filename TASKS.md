@@ -8,7 +8,28 @@
 ## Phase 0 — Hello World (hardware bringup)
 > Smoke-test every physical component before implementing real logic.
 
-- [ ] Scaffold hello world `app_main`: BOOT button wakes from deep sleep, WS2812B cycles colors, BLE advertises, two PN532s detected on SPI, NVS read/write round-trip
+### Hardware discoveries (bringup sessions 2026-05-26 / 2026-05-27)
+- PN532 wakeup requires CS held LOW ≥5ms with no clock → use manual GPIO CS (`spics_io_num = -1`)
+- `idf_monitor` requires interactive TTY; use `python3 /tmp/read_serial.py` script instead (see dev-setup skill)
+- After running host tests, `sdkconfig` gets reset to `linux` target → run `idf.py set-target esp32s3` before hardware builds
+- Flash size warning (`16384k vs 2048k`) is harmless; fix later via menuconfig
+- **Power matters**: both PN532s wired to the same ESP 3V3 pin produced dirty bus (MISO `10 10...` on #1). Splitting power across two 3V3 pins cleaned the bus.
+- **Bit order**: tried both MSB-first and LSB-first with LSB flag — no difference in this state. Reverted to MSB-first. Likely irrelevant until SPI mode is confirmed.
+- **SW1/SW2 jumper combo unknown for our specific boards** — TASKS.md previously claimed `SW1=0,SW2=1` works, but that was never confirmed by seeing a real `D5 03` response. Worth checking silkscreen labels next session.
+
+### Last state (2026-05-27, paused to focus on BLE)
+- Both PN532s on bus, both MISO read clean idle `FF FF FF…` after split-power + new wires
+- Neither chip drives MISO in response to `GetFirmwareVersion` (`00 00 FF 02 FE D4 02 2A 00`)
+- Conclusion: chips are powered + on the bus but **not in SPI mode**, or not receiving SCK/MOSI
+- Next time: physically verify SW1/SW2 jumper positions against board silkscreen; measure 3.3V at both VCC pads; consider scope/LA capture of SCK + MOSI at PN532 input pin to confirm signals arrive
+
+### Tasks
+- [ ] PN532 #1 (CS GPIO10): verify `GetFirmwareVersion` returns `IC=0x32 Ver=1` — **paused**, suspect SW1/SW2 jumper combo
+- [ ] PN532 #2 (CS GPIO9): verify `GetFirmwareVersion` — **paused**, same suspicion
+- [ ] WS2812B RMT driver: cycles through LED color contract (GPIO 48)
+- [ ] Deep sleep + BOOT button wake: GPIO 0 wakes from deep sleep
+- [ ] NVS driver: write + read + erase `imb_local` namespace
+- [ ] BLE GATT server: phone connects, subscribes to notify chars, writes COMMAND_WRITE
 - [ ] Verify GPIO pin assignments on real board (see CLAUDE.md for map)
 
 ---
@@ -50,16 +71,52 @@ All components under `components/imb_*/`. Run tests: `cd components/<name>/test 
 - [ ] NVS driver: write + read + erase `imb_local` namespace
 - [ ] BLE GATT server: phone connects, subscribes to notify chars, writes COMMAND_WRITE
 
-## Phase 1 — Integration (single box, no mesh)
+## Phase 1 — BLE Contract (locked 2026-05-27)
 
+**Source of truth:** [`docs/ble-contract.md`](docs/ble-contract.md) — full GATT/transport spec for phone team.
+
+### Wire-protocol additions to `imb_protocol`
+- [ ] Add `IMB_MSG_REPORT_CHUNK` (replaces single-shot REPORT; fragmented w/ report_id + chunk_index)
+- [ ] Add `IMB_MSG_EVENT_ACK` (universal CMD reply with msg_id echo + status code)
+- [ ] Add `IMB_MSG_EVENT_DROPPED` (signals queue overflow during connect→subscribe window)
+- [ ] Add `IMB_MSG_CMD_HELLO` (mandatory first message; carries pin_hash)
+- [ ] Add `IMB_MSG_CMD_SET_PIN` (SETUP mode provisioning)
+- [ ] Add `IMB_MSG_CMD_REPORT_ACK` / `IMB_MSG_CMD_REPORT_NACK` (per-chunk ack flow)
+- [ ] Add `IMB_MSG_CMD_UNBOND` (optional clean disconnect)
+- [ ] Add `msg_id` byte to every CMD_* (at offset 1); update existing pack/unpack
+- [ ] Add `imb_ack_status_e` enum (8 values: OK, PIN_MISMATCH, REGISTRY_FULL, NDEF_WRITE_FAILED, INVALID_MODE, UNKNOWN_UID, NOT_AUTHED, REGISTRATION_INCOMPLETE)
+- [ ] Update host tests for all new messages + round-trip
+
+### Types additions
+- [ ] Add `IMB_MODE_REGISTRATION_INCOMPLETE = 3` to `imb_op_mode_e`
+- [ ] Add `IMB_EVENT_QUEUE_DEPTH = 8` constant
+
+### NVS schema additions (`imb_state` namespace)
+- [ ] `pending_count` uint8
+- [ ] `pending_uids` packed array (up to 64 × 15 bytes)
+- [ ] `pending_epoch` uint32
+
+### BLE driver layer (new component: `imb_ble`)
+- [ ] Generate base UUID + 4 derived (one-time `uuidgen`); paste in `docs/ble-contract.md` §2.1 and code
+- [ ] NimBLE GATT server: 1 service, 3 characteristics (EVENT_NOTIFY, REPORT_NOTIFY notify; COMMAND_WRITE write-with-response)
+- [ ] Advertisement: `IMB-<name>-<last4MAC>` + mfg-data (company_id, pin_hash, op_mode, flags)
+- [ ] MTU negotiation to 247 on connect
+- [ ] Connection parameter profiles: FIELD_CHECK fast (15–30ms, lat=0, sup=2s) / REGISTRATION slow (100–200ms, lat=4, sup=6s); re-request on mode change
+- [ ] Just Works pairing + LE Secure Connections + bonding (NimBLE bonding store in NVS)
+- [ ] 8-event RAM queue for connect→subscribe window; flush on second CCCD subscribe
+- [ ] CMD_HELLO gate: reject all CMDs before HELLO with NOT_AUTHED; 5s HELLO timeout → disconnect
+- [ ] Single-client enforcement (reject second concurrent connection)
+- [ ] CMD_UNBOND handler: delete bond, ACK, disconnect
+
+### Integration (after drivers up)
 - [ ] Wire `imb_detector` → `imb_session` in main loop
 - [ ] Wire `imb_session` + `imb_registry` → `imb_delta` on lid close
-- [ ] Wire `imb_delta` → `imb_protocol` → BLE REPORT_NOTIFY
-- [ ] Registration mode: phone sends START_REGISTRATION → box enters REGISTRATION mode
-- [ ] Registration gate: unnamed tag → BLE alert → phone sends name → NDEF write → registry
-- [ ] Field check: lid close → delta → REPORT_NOTIFY fires only if changed since last check
-- [ ] Accept/reject: post-registration foreign tag → BLE alert → phone accept → registry
-- [ ] Mode persisted in NVS (`imb_state` namespace `op_mode` key): survives reboot
+- [ ] Wire `imb_delta` → REPORT chunking → REPORT_NOTIFY
+- [ ] Report ACK/NACK loop with NVS-backed retry on incomplete delivery
+- [ ] REGISTRATION flow with pending_uids NVS persistence
+- [ ] REGISTRATION_INCOMPLETE sticky state + lid-open-rescan recovery
+- [ ] Factory reset: 10s BOOT button hold → erase all imb_* NVS namespaces + NimBLE store → reboot
+- [ ] Mode persisted in NVS (`imb_state.op_mode`) survives reboot
 
 ---
 

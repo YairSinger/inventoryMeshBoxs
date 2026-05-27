@@ -62,6 +62,16 @@ get_idf
 idf.py --version   # should print: ESP-IDF v5.3
 ```
 
+### ⚠️ Target reset after host tests
+
+Running host tests (components/*/test with linux target) changes the root `sdkconfig` to `CONFIG_IDF_TARGET="linux"`. Before building for hardware you **must** reset the target:
+
+```bash
+get_idf
+idf.py set-target esp32s3
+idf.py build
+```
+
 ### 5. Verify host tests work (no hardware needed)
 
 ```bash
@@ -80,12 +90,36 @@ idf.py build
 
 ### 7. Flash to hardware (when you have the board)
 
-Connect the ESP32-S3 N16R8 via USB-C (UART port, not native USB port).
+Connect the ESP32-S3 N16R8 via USB-C (UART port, not native USB port). Port shows up as `/dev/cu.usbserial-*`.
 
 ```bash
-idf.py -p /dev/cu.usbserial-* flash monitor
-# Press BOOT button if the board doesn't enter download mode automatically
+idf.py -p /dev/cu.usbserial-* flash
 ```
+
+`idf_monitor` requires an interactive TTY and does not work from Claude Code's shell. Use this Python script to read serial output instead:
+
+```python
+# /tmp/read_serial.py
+import serial, time
+s = serial.Serial('/dev/cu.usbserial-A5069RR4', 115200, timeout=0.1)
+s.setDTR(False); s.setRTS(False)
+print('Listening 10s — press RESET now', flush=True)
+buf = b''
+deadline = time.time() + 10
+while time.time() < deadline:
+    chunk = s.read(256)
+    if chunk:
+        buf += chunk
+        deadline = max(deadline, time.time() + 2)
+s.close()
+print(buf.decode('utf-8', errors='replace'))
+```
+
+Run with: `python3 /tmp/read_serial.py | tee /tmp/output.log`  
+Press **EN/RST** (not BOOT) on the board after starting the script.  
+If it boots into download mode, DTR is holding GPIO0 low — use `setDTR(False)`.
+
+Install pyserial if needed: `pip3 install pyserial`
 
 ## Testing cheat sheet
 
@@ -102,6 +136,14 @@ idf.py -p /dev/cu.usbserial-* flash monitor
 - **Native USB port**: not used for development
 - **Boot button** (GPIO0): temporary lid-open trigger during prototyping
 - See CLAUDE.md for full GPIO pin assignments
+
+## PN532 SPI notes (discovered during bringup)
+
+- **Mode jumpers**: this board uses SW1/SW2. SPI = SW1=0, SW2=1. HSU = 0,0. I2C = 1,0.
+- **MSB-first**: despite the PN532 datasheet saying "LSB first", all working libraries use standard SPI MSB-first. Do NOT set `SPI_DEVICE_BIT_LSBFIRST` — it garbles communication.
+- **Wakeup**: assert CS (SS) low for ≥5ms with no clock before sending the first command. Use manual GPIO CS (`spics_io_num = -1`) to do this properly.
+- **Clock**: 500kHz for bringup; can increase to 1MHz+ once verified.
+- **Flash size warning**: `W spi_flash: Detected size(16384k) larger than binary header(2048k)` is harmless — fix by setting flash size to 16MB in menuconfig (`CONFIG_ESPTOOLPY_FLASHSIZE_16MB`).
 
 ## Architecture orientation
 
