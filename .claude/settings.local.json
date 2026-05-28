@@ -6,7 +6,10 @@
       "Bash(export PATH=\"$IDF_PYTHON_ENV_PATH/bin:$IDF_PATH/tools:$PATH\")",
       "Bash(python3 /Users/yair/esp/esp-idf/tools/idf.py --version)",
       "Bash(gh repo *)",
-      "Skill(grill-me)"
+      "Skill(grill-me)",
+      "Bash(bash -c 'source ~/esp/esp-idf/export.sh 2>/dev/null; idf.py -p /dev/cu.usbserial-A5069RR4 flash')",
+      "Bash(git -C /Users/yair/git/inventoryMeshBoxs add CLAUDE.md TASKS.md main/main.c .claude/skills/dev-setup.md .claude/settings.local.json)",
+      "Bash(git -C /Users/yair/git/inventoryMeshBoxs commit -m ' *)"
     ]
   }
 }

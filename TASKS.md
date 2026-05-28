@@ -17,6 +17,13 @@
 - **Bit order**: tried both MSB-first and LSB-first with LSB flag — no difference in this state. Reverted to MSB-first. Likely irrelevant until SPI mode is confirmed.
 - **SW1/SW2 jumper combo unknown for our specific boards** — TASKS.md previously claimed `SW1=0,SW2=1` works, but that was never confirmed by seeing a real `D5 03` response. Worth checking silkscreen labels next session.
 
+### Session 2026-05-28 — tag detection confirmed
+- **SAMConfiguration is mandatory**: must be sent before any RF command or the PN532 RF field stays inactive. Every reference library sends this as the first init command.
+- **Wakeup pulse required before each scan**: PN532 enters standby between commands; CS must be held low ≥10ms (tOSC_START max 2ms + margin) before each SPI transaction.
+- **Confirmed init order**: `probe (GetFirmwareVersion)` → `SAMConfiguration(NormalMode)` → `RFConfiguration(MaxRetries, MxRtyPassiveActivation=3)` → scan loop.
+- **Tag detected**: MIFARE Classic 1K, ATQA=0004, SAK=08, UID `14 E0 99 2C` on reader #1.
+- `/chip-integration` skill added globally — invoke before any new peripheral integration.
+
 ### Last state (2026-05-27, paused to focus on BLE)
 - Both PN532s on bus, both MISO read clean idle `FF FF FF…` after split-power + new wires
 - Neither chip drives MISO in response to `GetFirmwareVersion` (`00 00 FF 02 FE D4 02 2A 00`)
@@ -24,8 +31,8 @@
 - Next time: physically verify SW1/SW2 jumper positions against board silkscreen; measure 3.3V at both VCC pads; consider scope/LA capture of SCK + MOSI at PN532 input pin to confirm signals arrive
 
 ### Tasks
-- [ ] PN532 #1 (CS GPIO10): verify `GetFirmwareVersion` returns `IC=0x32 Ver=1` — **paused**, suspect SW1/SW2 jumper combo
-- [ ] PN532 #2 (CS GPIO9): verify `GetFirmwareVersion` — **paused**, same suspicion
+- [x] PN532 #1 (CS GPIO10): verify `GetFirmwareVersion` returns `IC=0x32 Ver=1` — **DONE** (IC=0x32 Ver=1 Rev=6)
+- [x] PN532 #2 (CS GPIO9): verify `GetFirmwareVersion` — **DONE** (IC=0x32 Ver=1 Rev=6)
 - [ ] WS2812B RMT driver: cycles through LED color contract (GPIO 48)
 - [ ] Deep sleep + BOOT button wake: GPIO 0 wakes from deep sleep
 - [ ] NVS driver: write + read + erase `imb_local` namespace
@@ -63,8 +70,8 @@ All components under `components/imb_*/`. Run tests: `cd components/<name>/test 
 > Run with: `idf.py -T components/<name> build flash monitor`
 > Erase NVS between runs: see CLAUDE.md toolchain section.
 
-- [ ] PN532 #1 SPI driver: reads NTAG213 UID (CS GPIO 10, inner reader)
-- [ ] PN532 #2 SPI driver: reads NTAG213 UID (CS GPIO 9, outer reader)
+- [x] PN532 #1 SPI driver: reads ISO 14443A UID (CS GPIO 10, inner reader) — **DONE** (MIFARE Classic confirmed, UID 14 E0 99 2C)
+- [x] PN532 #2 SPI driver: reads ISO 14443A UID (CS GPIO 9, outer reader) — **DONE**
 - [ ] PN532 NDEF write: writes text record to tag via `InDataExchange`
 - [ ] WS2812B RMT driver: cycles through LED color contract (GPIO 48)
 - [ ] Deep sleep + BOOT button wake: GPIO 0 wakes from deep sleep

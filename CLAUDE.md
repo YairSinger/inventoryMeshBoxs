@@ -21,6 +21,17 @@ Detailed design + reference docs in `docs/`. Read on demand, not eagerly:
 | [`docs/testing.md`](docs/testing.md) | Two-layer test architecture, HAL pattern, toolchain commands, host vs on-device |
 | [`TASKS.md`](TASKS.md) | Active work tracking by phase |
 
+## Firmware integration rule — check reference implementations first
+
+Before implementing or modifying any hardware driver or chip protocol, **search for a reference implementation and read the datasheet initialization sequence**. Do not infer protocol details from first principles.
+
+Two bugs that cost many hours of debugging were both detectable upfront:
+
+- **PN532 + ESP32-S3 SPI mismatch**: PN532 is natively LSB-first; ESP-IDF hardware SPI on ESP32-S3 is MSB-first with no reliable runtime flip. Every working Arduino/libnfc PN532 driver uses bit-bang or explicit LSB reversal. Checking any open-source PN532 library before starting would have revealed this.
+- **SAMConfiguration required before RF**: Every PN532 library (Adafruit, libnfc, elechouse) sends `SAMConfiguration(NormalMode)` as the first command after power-on. Without it the RF field stays inactive and `InListPassiveTarget` silently scans forever. The datasheet and every reference implementation document this requirement.
+
+**Rule**: when integrating a new chip or protocol, invoke `/chip-integration` before writing any driver code. It runs a structured web search and extracts the mandatory init sequence from reference implementations. Use those as ground truth, not the datasheet alone.
+
 ## Hot rules (always apply, no need to open subdocs)
 
 - **`imb_local` NVS is ground truth.** Never derive item presence from `imb_mesh` when local data exists.
