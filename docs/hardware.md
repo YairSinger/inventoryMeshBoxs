@@ -10,7 +10,7 @@
 | NFC Tags | NTAG213 (13.56MHz) | passive |
 | Lid trigger (proto) | BOOT button GPIO0 / HC-SR04 | GPIO0 active-low |
 | LED | WS2812B onboard GPIO48 | RMT peripheral |
-| Master box screen | OLED SSD1306 0.96" | I2C |
+| Master box screen | OLED SSD1309 2.42" (Hackstore selection) | I2C |
 | Master box input | 3x tactile buttons | GPIO |
 | Power (proto) | USB power bank | USB-C |
 | Power (final) | LiPo 2000mAh + TP4056 + MAX17043 | I2C fuel gauge |

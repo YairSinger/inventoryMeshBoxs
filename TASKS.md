@@ -124,9 +124,18 @@ All components under `components/imb_*/`. Run tests: `cd components/<name>/test 
 
 ---
 
+## Phase 1 — Phone Application (TDD, Mock-driven)
+
+- [x] `IBleClient` interface + `MockBleClient` for host-agnostic testing
+- [x] `BoxSessionProvider`: sequential naming queue + automatic retry logic
+- [x] `RegistrationOverlay`: reactive naming modal flow
+- [x] Registration Workflow: START/END flow with "Hard Gate" (blocked if unnamed exist)
+- [x] Protocol Sync: generated Dart models from `imb_protocol.h`
+- [ ] Mesh View UI: multi-box summary (next)
+
 ## Phase 2 — Master Box (current branch: `feat/phase2-master-box`)
 
-- [ ] OLED SSD1306 driver (I2C SDA GPIO 2, SCL GPIO 3)
+- [ ] OLED SSD1309 2.42" driver (I2C SDA GPIO 2, SCL GPIO 3)
 - [ ] 3-button navigation driver (UP GPIO 14, SELECT GPIO 15, BACK GPIO 16)
 - [ ] Master box UI: registration flow on-device
 - [ ] Master box UI: field check report display
@@ -151,3 +160,4 @@ All components under `components/imb_*/`. Run tests: `cd components/<name>/test 
 - [x] Host test structure documented in CLAUDE.md
 - [x] Dev-setup skill: `.claude/skills/dev-setup.md`
 - [ ] On-device test structure: standalone ESP-IDF project per driver component (see CLAUDE.md)
+n-device test structure: standalone ESP-IDF project per driver component (see CLAUDE.md)
