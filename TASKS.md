@@ -33,9 +33,10 @@
 ### Tasks
 - [x] PN532 #1 (CS GPIO10): verify `GetFirmwareVersion` returns `IC=0x32 Ver=1` — **DONE** (IC=0x32 Ver=1 Rev=6)
 - [x] PN532 #2 (CS GPIO9): verify `GetFirmwareVersion` — **DONE** (IC=0x32 Ver=1 Rev=6)
-- [ ] WS2812B RMT driver: cycles through LED color contract (GPIO 48)
+- [x] WS2812B RMT driver: cycles through LED color contract (GPIO 48) — **DONE** (main/main.c, all 10 patterns confirmed on board)
+- [x] Deep sleep + timer wakeup — **DONE** (integration test PASS, 3s timer → WAKEUP_TIMER confirmed)
+- [x] NVS driver: write + read + erase `imb_local` namespace — **DONE** (integration tests PASS)
 - [ ] Deep sleep + BOOT button wake: GPIO 0 wakes from deep sleep
-- [ ] NVS driver: write + read + erase `imb_local` namespace
 - [ ] BLE GATT server: phone connects, subscribes to notify chars, writes COMMAND_WRITE
 - [ ] Verify GPIO pin assignments on real board (see CLAUDE.md for map)
 
@@ -72,10 +73,11 @@ All components under `components/imb_*/`. Run tests: `cd components/<name>/test 
 
 - [x] PN532 #1 SPI driver: reads ISO 14443A UID (CS GPIO 10, inner reader) — **DONE** (MIFARE Classic confirmed, UID 14 E0 99 2C)
 - [x] PN532 #2 SPI driver: reads ISO 14443A UID (CS GPIO 9, outer reader) — **DONE**
-- [ ] PN532 NDEF write: writes text record to tag via `InDataExchange`
-- [ ] WS2812B RMT driver: cycles through LED color contract (GPIO 48)
+- [x] PN532 NDEF / tag write: MIFARE Classic 1K block write + readback — **DONE** (integration test PASS; NTAG213 path implemented, untested)
+- [x] WS2812B RMT driver: cycles through LED color contract (GPIO 48) — **DONE**
+- [x] NVS driver: write + read + erase `imb_local` namespace — **DONE**
+- [x] Deep sleep + timer wakeup — **DONE**
 - [ ] Deep sleep + BOOT button wake: GPIO 0 wakes from deep sleep
-- [ ] NVS driver: write + read + erase `imb_local` namespace
 - [ ] BLE GATT server: phone connects, subscribes to notify chars, writes COMMAND_WRITE
 
 ## Phase 1 — BLE Contract (locked 2026-05-27)
