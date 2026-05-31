@@ -115,7 +115,7 @@ s.close()
 print(buf.decode('utf-8', errors='replace'))
 ```
 
-Run with: `python3 /tmp/read_serial.py | tee /tmp/output.log`  
+Run with: `python3 tools/serial_monitor.py | tee /tmp/imb_smoke.log`  
 Press **EN/RST** (not BOOT) on the board after starting the script.  
 If it boots into download mode, DTR is holding GPIO0 low — use `setDTR(False)`.
 

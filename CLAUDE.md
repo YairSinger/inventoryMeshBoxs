@@ -52,7 +52,8 @@ Two bugs that cost many hours of debugging were both detectable upfront:
 cd components/<name>/test && make run
 
 # Flash + monitor (non-TTY: use python3 /tmp/read_serial.py for monitor)
-idf.py -p /dev/cu.usbserial-* flash monitor
+idf.py -p /dev/cu.usbserial-* flash
+python3 tools/serial_monitor.py | tee /tmp/imb_smoke.log
 
 # After host tests, restore target before flashing
 idf.py set-target esp32s3
