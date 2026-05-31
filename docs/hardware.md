@@ -11,7 +11,6 @@
 | Lid trigger (proto) | BOOT button GPIO0 / HC-SR04 | GPIO0 active-low |
 | LED | WS2812B onboard GPIO48 | RMT peripheral |
 | Buzzer | Passive buzzer 12mm (1.5–6V, SKU A61-B15) | GPIO17 (LEDC PWM) |
-| Master box screen | OLED SSD1309 2.42" (Hackstore selection) | I2C |
 | Master box input | 3x tactile buttons | GPIO |
 | Power (proto) | USB power bank | USB-C |
 | Power (final) | LiPo 2000mAh + TP4056 + MAX17043 | I2C fuel gauge |
@@ -28,8 +27,8 @@
 | SR04 TRIG | 4 | temporary lid sensor |
 | SR04 ECHO | 5 | temporary lid sensor |
 | WS2812B LED | 48 | onboard, RMT driver |
-| I2C SDA (master) | 2 | OLED + fuel gauge |
-| I2C SCL (master) | 3 | OLED + fuel gauge |
+| I2C SDA (master) | 2 | Display + fuel gauge |
+| I2C SCL (master) | 3 | Display + fuel gauge |
 | Button UP (master) | 14 | |
 | Button SELECT (master) | 15 | |
 | Button BACK (master) | 16 | |

@@ -514,7 +514,9 @@ The IMB mesh is designed for autonomous operation without cloud infrastructure.
 - **UUIDs:** generate base UUID + 4 derived. Run `uuidgen` once, paste into both codebases.
 - **Mfg-data company_id:** currently `0xFFFF` (test/internal). If commercialized, request NXP Bluetooth SIG company ID.
 - **CCCD persistence across bonds:** ESP-IDF NimBLE bonding stores CCCD state automatically. Verify on first end-to-end test that a bonded reconnect doesn't require re-subscribing.
-- **Phase 2 master box:** Passkey pairing replaces Just Works once OLED is available.
+- **Phase 2 master box:** Passkey pairing replaces Just Works once display is available.
+- **Phase 3 mesh:** consolidated REPORT_NOTIFY semantics (multiple boxes → one report via master); cross-box transaction broadcast (out of scope for this contract).
+- **Possible Phase 3+ pivot to commercial / large-inventory:** if pivoting to warehouse-style multi-staff use, single-client-per-box constraint may need to become multi-client-per-mesh. The mesh layer would handle authorization; per-box auth stays single-client.
 
 ---
 

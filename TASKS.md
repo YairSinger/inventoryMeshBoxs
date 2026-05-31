@@ -155,7 +155,6 @@ Callbacks: `on_subscribed(ctx)` [EVENT_NOTIFY CCCD enabled], `on_cmd(ctx, buf, l
 
 ## Phase 2 — Master Box (current branch: `feat/phase2-master-box`)
 
-- [ ] OLED SSD1309 2.42" driver (I2C SDA GPIO 2, SCL GPIO 3)
 - [ ] 3-button navigation driver (UP GPIO 14, SELECT GPIO 15, BACK GPIO 16)
 - [ ] Master box UI: registration flow on-device
 - [ ] Master box UI: field check report display

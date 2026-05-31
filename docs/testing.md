@@ -4,7 +4,7 @@
 
 **IN:** BOOT button lid trigger, two PN532s (SPI, directional, AMBIGUOUS), WS2812B LED, NVS `imb_local` + `imb_state` only, BLE GATT server (3 characteristics), full BLE contract per `docs/ble-contract.md`, REGISTRATION flow with NDEF write + pending UIDs in NVS, REGISTRATION_INCOMPLETE sticky state, FIELD_CHECK delta-only alerts, accept/reject for post-registration tags, PIN provisioning in SETUP mode, factory reset via BOOT long-press.
 
-**OUT:** ESP-Mesh, master box OLED + buttons, SR04, power monitoring, advanced box naming flow (Phase 2 master box drives this).
+**OUT:** ESP-Mesh, master box display + buttons, SR04, power monitoring, advanced box naming flow (Phase 2 master box drives this).
 
 ## Toolchain
 
