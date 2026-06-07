@@ -1,6 +1,6 @@
 /* IMB Node — main application loop
  *
- * Stack: PN532 (bit-bang SPI) → imb_detector → imb_session + imb_buzzer
+ * Stack: PN532 (bit-bang SPI) → imb_detector → imb_session + imb_buzzer + imb_ble_session
  *
  * Wiring (hardware.md):
  *   MOSI=11, MISO=13, SCK=12
@@ -12,13 +12,17 @@
 #include <string.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/timers.h"
 #include "driver/gpio.h"
 #include "rom/ets_sys.h"
 #include "esp_timer.h"
+#include "nvs_flash.h"
 #include "imb_buzzer.h"
 #include "imb_buzzer_ledc.h"
 #include "imb_detector.h"
 #include "imb_session.h"
+#include "imb_ble.h"
+#include "imb_ble_session.h"
 
 /* ── Pin map ────────────────────────────────────────────────────────────── */
 
@@ -139,6 +143,61 @@ static void uid_to_str(const tag_t *t, char out[15])
     out[i * 2] = '\0';
 }
 
+/* ── BLE session timer HAL ──────────────────────────────────────────────── */
+
+typedef struct {
+    TimerHandle_t       handle;
+    imb_session_timer_cb_t cb;
+    void               *arg;
+} ble_timer_ctx_t;
+
+static void ble_timer_fire(TimerHandle_t xTimer)
+{
+    ble_timer_ctx_t *t = (ble_timer_ctx_t *)pvTimerGetTimerID(xTimer);
+    if (t->cb) t->cb(t->arg);
+}
+
+static void ble_timer_start(uint32_t ms, imb_session_timer_cb_t cb, void *arg, void *ctx)
+{
+    ble_timer_ctx_t *t = (ble_timer_ctx_t *)ctx;
+    t->cb  = cb;
+    t->arg = arg;
+    if (!t->handle)
+        t->handle = xTimerCreate("ble_tmr", pdMS_TO_TICKS(ms), pdFALSE, t, ble_timer_fire);
+    else
+        xTimerChangePeriod(t->handle, pdMS_TO_TICKS(ms), 0);
+    xTimerStart(t->handle, 0);
+}
+
+static void ble_timer_stop(void *ctx)
+{
+    ble_timer_ctx_t *t = (ble_timer_ctx_t *)ctx;
+    if (t->handle) xTimerStop(t->handle, 0);
+}
+
+static ble_timer_ctx_t g_hello_timer_ctx;
+static ble_timer_ctx_t g_grace_timer_ctx;
+
+/* ── BLE HAL wrappers ───────────────────────────────────────────────────── */
+
+static int ble_hal_notify_event(const uint8_t *buf, size_t len, void *ctx)
+{
+    (void)ctx;
+    return imb_ble_notify_event(buf, len) == ESP_OK ? 0 : -1;
+}
+
+static int ble_hal_notify_report(const uint8_t *buf, size_t len, void *ctx)
+{
+    (void)ctx;
+    return imb_ble_notify_report(buf, len) == ESP_OK ? 0 : -1;
+}
+
+static void ble_hal_disconnect(void *ctx)
+{
+    (void)ctx;
+    imb_ble_disconnect();
+}
+
 /* ── App context ────────────────────────────────────────────────────────── */
 
 typedef struct {
@@ -166,6 +225,15 @@ static void on_scan_event(const imb_scan_event_t *e, void *ctx)
         printf("[EVENT] AMBIGUOUS uid=%s\n", e->uid);
         break;
     }
+
+    /* Push to BLE event queue (no-op if no client subscribed) */
+    imb_pkt_event_tag_t pkt = {
+        .msg_type  = IMB_MSG_EVENT_TAG,
+        .direction = (uint8_t)e->dir,
+    };
+    strncpy(pkt.uid,  e->uid,  IMB_UID_LEN  - 1);
+    strncpy(pkt.name, "",      IMB_NAME_LEN - 1);
+    imb_ble_session_push_event_tag(&pkt);
 }
 
 static uint32_t get_ms(void)
@@ -178,6 +246,13 @@ static uint32_t get_ms(void)
 void app_main(void)
 {
     printf("\n=== IMB Node — event loop ===\n");
+
+    /* NVS init (required by NimBLE) */
+    esp_err_t nvs_err = nvs_flash_init();
+    if (nvs_err == ESP_ERR_NVS_NO_FREE_PAGES || nvs_err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        nvs_flash_erase();
+        nvs_flash_init();
+    }
 
     /* GPIO init */
     gpio_config_t out_cfg = {
@@ -214,7 +289,44 @@ void app_main(void)
 
     static imb_detector_t detector;
     imb_detector_init(&detector, 500, get_ms, on_scan_event, &app_ctx);
-    printf("[INIT] Detector ready — scanning...\n\n");
+    printf("[INIT] Detector ready\n");
+
+    /* BLE session HALs */
+    static const imb_ble_session_ble_hal_t ble_hal = {
+        .notify_event  = ble_hal_notify_event,
+        .notify_report = ble_hal_notify_report,
+        .disconnect    = ble_hal_disconnect,
+    };
+    static const imb_ble_session_app_cbs_t app_cbs = { 0 }; /* stubs — phone cmds not handled yet */
+
+    imb_ble_session_config_t sess_cfg = {
+        .pin_hash = 0,  /* SETUP mode — no PIN yet */
+        .nvs      = NULL,
+        .ble      = &ble_hal,
+        .app      = &app_cbs,
+        .hello_timer = {
+            .start = ble_timer_start,
+            .stop  = ble_timer_stop,
+            .ctx   = &g_hello_timer_ctx,
+        },
+        .grace_timer = {
+            .start = ble_timer_start,
+            .stop  = ble_timer_stop,
+            .ctx   = &g_grace_timer_ctx,
+        },
+    };
+    imb_ble_session_init(&sess_cfg);
+
+    /* BLE transport */
+    static const imb_ble_callbacks_t ble_cbs = {
+        .on_connected    = imb_ble_session_on_connected,
+        .on_subscribed   = imb_ble_session_on_subscribed,
+        .on_cmd          = imb_ble_session_on_cmd,
+        .on_disconnected = imb_ble_session_on_disconnected,
+    };
+    imb_ble_init(&ble_cbs, NULL);
+    imb_ble_update_adv(0, IMB_MODE_SETUP, 0, "Box1");
+    printf("[INIT] BLE advertising — IMB-SETUP-xxxx\n\n");
 
     /* Main poll loop */
     char uid[15];

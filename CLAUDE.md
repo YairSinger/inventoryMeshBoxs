@@ -32,6 +32,10 @@ Two bugs that cost many hours of debugging were both detectable upfront:
 
 **Rule**: when integrating a new chip or protocol, invoke `/chip-integration` before writing any driver code. It runs a structured web search and extracts the mandatory init sequence from reference implementations. Use those as ground truth, not the datasheet alone.
 
+## Commit discipline
+
+**Never commit without a sanity test first.** After building, flash the firmware and confirm the device boots and the relevant feature is observable (serial output, BLE advertisement, buzzer tone, etc.) before creating a commit. A clean build is not a sanity test.
+
 ## Hot rules (always apply, no need to open subdocs)
 
 - **`imb_local` NVS is ground truth.** Never derive item presence from `imb_mesh` when local data exists.
