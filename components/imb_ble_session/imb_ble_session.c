@@ -299,6 +299,26 @@ static void handle_set_pin(const uint8_t *buf, size_t len)
         g_s.cfg.app->on_set_pin(g_s.cfg.app->ctx, cmd.pin_hash, cmd.box_name, cmd.msg_id);
 }
 
+static void handle_box_name(const uint8_t *buf, size_t len)
+{
+    if (len < 2) return;
+    uint8_t msg_id = buf[1];
+
+    if (g_s.mode == IMB_MODE_SETUP) {
+        send_ack(msg_id, IMB_MSG_CMD_BOX_NAME, IMB_ACK_INVALID_MODE);
+        return;
+    }
+
+    imb_pkt_cmd_box_name_t cmd;
+    if (imb_proto_unpack_cmd_box_name(buf, len, &cmd) != 0) return;
+
+    send_ack(cmd.msg_id, IMB_MSG_CMD_BOX_NAME, IMB_ACK_OK);
+
+    /* App must persist new name to NVS and call imb_ble_update_adv() */
+    if (g_s.cfg.app && g_s.cfg.app->on_box_rename)
+        g_s.cfg.app->on_box_rename(g_s.cfg.app->ctx, cmd.box_name, cmd.msg_id);
+}
+
 static void handle_unbond(const uint8_t *buf, size_t len)
 {
     if (len < 2) return;
@@ -408,6 +428,7 @@ void imb_ble_session_on_cmd(void *ctx, const uint8_t *buf, size_t len)
     case IMB_MSG_CMD_SET_PIN:      handle_set_pin(buf, len);     break;
     case IMB_MSG_CMD_REPORT_ACK:   handle_report_ack(buf, len);  break;
     case IMB_MSG_CMD_REPORT_NACK:  handle_report_nack(buf, len); break;
+    case IMB_MSG_CMD_BOX_NAME:     handle_box_name(buf, len);    break;
     case IMB_MSG_CMD_UNBOND:       handle_unbond(buf, len);      break;
     default: break;  /* CMD_GET_LOG, CMD_MESH_STATUS — not yet implemented */
     }

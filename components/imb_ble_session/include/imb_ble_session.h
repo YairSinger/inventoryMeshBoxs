@@ -45,6 +45,8 @@ typedef struct {
     void (*on_mode_set)(void *ctx, imb_op_mode_e mode, uint8_t msg_id);
     /* pin_hash + box_name: app must persist to NVS and call imb_ble_update_adv() */
     void (*on_set_pin)(void *ctx, uint32_t pin_hash, const char *box_name, uint8_t msg_id);
+    /* new_name: app must persist to NVS and call imb_ble_update_adv() */
+    void (*on_box_rename)(void *ctx, const char *new_name, uint8_t msg_id);
     void (*on_report_delivered)(void *ctx, bool success);
     void *ctx;
 } imb_ble_session_app_cbs_t;

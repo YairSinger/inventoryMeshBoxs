@@ -176,6 +176,7 @@ Most struct definitions live in `imb_protocol.h`. Below is the **complete final 
 | 0x17 | `CMD_UNBOND` | phone → box | Erase this phone's bond from box |
 | 0x18 | `CMD_GET_LOG` | phone → box | Pull transaction log history |
 | 0x19 | `CMD_MESH_STATUS` | phone → box | Request peer box health/RSSIs |
+| 0x1A | `CMD_BOX_NAME` | phone → box | Rename box post-setup (any mode except SETUP) |
 
 ### 4.2 Common command header
 
@@ -431,6 +432,22 @@ on_connect_failure(box, error):
         prompt_user("This box was reset. Re-pair?")
         on confirm: reconnect (triggers fresh OS pairing dialog)
 ```
+
+### 8.3a CMD_BOX_NAME (rename box)
+
+Phone can send `CMD_BOX_NAME { msg_id, box_name }` at any time after setup to rename the box without factory reset.
+
+```c
+typedef struct __attribute__((packed)) {
+    uint8_t msg_type;               /* 0x1A */
+    uint8_t msg_id;
+    char    box_name[IMB_NAME_LEN]; /* new name, null-terminated, max 31 chars */
+} imb_pkt_cmd_box_name_t;
+```
+
+- Not allowed in SETUP mode — returns `EVENT_ACK[INVALID_MODE]`.
+- On success: box persists new name to NVS, returns `EVENT_ACK[CMD_BOX_NAME, OK]`, re-advertises as `IMB-<new_name>-<last4MAC>`.
+- Current mode is preserved; advertisement `op_mode` field reflects the unchanged mode.
 
 ### 8.4 CMD_UNBOND (optional clean disconnect)
 

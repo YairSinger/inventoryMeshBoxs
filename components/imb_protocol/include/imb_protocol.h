@@ -25,6 +25,7 @@ typedef enum {
     IMB_MSG_CMD_UNBOND       = 0x17,  /* phone→box: erase bond */
     IMB_MSG_CMD_GET_LOG      = 0x18,  /* phone→box: pull transaction log */
     IMB_MSG_CMD_MESH_STATUS  = 0x19,  /* phone→box: request peer box health/RSSIs */
+    IMB_MSG_CMD_BOX_NAME     = 0x1A,  /* phone→box: rename box (post-setup) */
 } imb_msg_type_e;
 
 typedef enum {
@@ -148,6 +149,13 @@ typedef struct __attribute__((packed)) {
     char     box_name[IMB_NAME_LEN]; /* human-readable box name */
 } imb_pkt_cmd_set_pin_t;
 
+/* CMD_BOX_NAME — rename box post-setup (any authenticated mode except SETUP) */
+typedef struct __attribute__((packed)) {
+    uint8_t msg_type;               /* IMB_MSG_CMD_BOX_NAME */
+    uint8_t msg_id;
+    char    box_name[IMB_NAME_LEN]; /* new human-readable name */
+} imb_pkt_cmd_box_name_t;
+
 /* Advertisement Manufacturer Data (8 bytes) */
 typedef struct __attribute__((packed)) {
     uint16_t company_id;  /* 0xFFFF */
@@ -176,6 +184,7 @@ size_t imb_proto_pack_cmd_mode     (const imb_pkt_cmd_mode_t     *msg, uint8_t *
 size_t imb_proto_pack_cmd_name     (const imb_pkt_cmd_name_t     *msg, uint8_t *buf, size_t max);
 size_t imb_proto_pack_cmd_accept   (const imb_pkt_cmd_accept_t   *msg, uint8_t *buf, size_t max);
 size_t imb_proto_pack_cmd_set_pin  (const imb_pkt_cmd_set_pin_t  *msg, uint8_t *buf, size_t max);
+size_t imb_proto_pack_cmd_box_name (const imb_pkt_cmd_box_name_t *msg, uint8_t *buf, size_t max);
 
 /* Pack report chunk header + entries[] into buf. */
 size_t imb_proto_pack_report_chunk (const imb_pkt_report_chunk_t *hdr,
@@ -190,6 +199,7 @@ int imb_proto_unpack_event_mode   (const uint8_t *buf, size_t len, imb_pkt_event
 int imb_proto_unpack_event_ack    (const uint8_t *buf, size_t len, imb_pkt_event_ack_t    *out);
 int imb_proto_unpack_cmd_hello    (const uint8_t *buf, size_t len, imb_pkt_cmd_hello_t    *out);
 int imb_proto_unpack_cmd_set_pin  (const uint8_t *buf, size_t len, imb_pkt_cmd_set_pin_t  *out);
+int imb_proto_unpack_cmd_box_name (const uint8_t *buf, size_t len, imb_pkt_cmd_box_name_t *out);
 int imb_proto_unpack_report_chunk (const uint8_t *buf, size_t len,
                                    imb_pkt_report_chunk_t *hdr_out,
                                    imb_pkt_report_entry_t *entries_out);

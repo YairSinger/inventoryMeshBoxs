@@ -225,6 +225,17 @@ static void app_on_set_pin(void *ctx, uint32_t pin_hash, const char *box_name, u
            (unsigned long)pin_hash, box_name);
 }
 
+/* Called by session after CMD_BOX_NAME succeeds */
+static void app_on_box_rename(void *ctx, const char *new_name, uint8_t msg_id)
+{
+    (void)msg_id;
+    app_ctx_t *app = (app_ctx_t *)ctx;
+    strncpy(app->box_name, new_name, IMB_NAME_LEN - 1);
+    app->box_name[IMB_NAME_LEN - 1] = '\0';
+    imb_ble_update_adv(app->pin_hash, IMB_MODE_FIELD_CHECK, 0, app->box_name);
+    printf("[BLE] box renamed → %s\n", app->box_name);
+}
+
 /* Called by session after CMD_MODE succeeds */
 static void app_on_mode_set(void *ctx, imb_op_mode_e mode, uint8_t msg_id)
 {
@@ -333,9 +344,10 @@ void app_main(void)
         .unbond        = ble_hal_unbond,
     };
     static const imb_ble_session_app_cbs_t app_cbs = {
-        .on_set_pin  = app_on_set_pin,
-        .on_mode_set = app_on_mode_set,
-        .ctx         = &app_ctx,
+        .on_set_pin    = app_on_set_pin,
+        .on_mode_set   = app_on_mode_set,
+        .on_box_rename = app_on_box_rename,
+        .ctx           = &app_ctx,
     };
 
     imb_ble_session_config_t sess_cfg = {

@@ -120,7 +120,32 @@ COMMAND_WRITE:   e5d50003-01d0-47e0-afc5-01e466d9298e
 
 ---
 
-## 9. Not yet implemented on firmware (do not expect)
+## 9. CMD_BOX_NAME (0x1A) — new command
+
+Allows renaming a provisioned box without factory reset.
+
+**Wire format:**
+```c
+typedef struct __attribute__((packed)) {
+    uint8_t msg_type;    /* 0x1A */
+    uint8_t msg_id;
+    char    box_name[32]; /* null-terminated, max 31 chars + null */
+} imb_pkt_cmd_box_name_t;
+```
+
+**Firmware behaviour:**
+- Returns `EVENT_ACK[INVALID_MODE]` if sent in SETUP mode
+- Returns `EVENT_ACK[OK]` on success, then re-advertises with new name
+- Current op_mode is preserved (not reset to FIELD_CHECK)
+
+**Required app changes:**
+- Add "Rename box" UI action (settings screen or long-press on box card)
+- Send CMD_BOX_NAME and wait for EVENT_ACK[OK]
+- On success, update the local display name for this box address
+
+---
+
+## 11. Not yet implemented on firmware (do not expect)
 
 These commands are received by the firmware but **not yet handled** — they will be silently ignored (no ACK returned):
 - `CMD_GET_LOG` (0x18)

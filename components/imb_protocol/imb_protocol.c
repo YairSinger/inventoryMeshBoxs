@@ -32,6 +32,9 @@ size_t imb_proto_pack_cmd_accept(const imb_pkt_cmd_accept_t *msg, uint8_t *buf, 
 size_t imb_proto_pack_cmd_set_pin(const imb_pkt_cmd_set_pin_t *msg, uint8_t *buf, size_t max)
     { PACK(msg, buf, max); }
 
+size_t imb_proto_pack_cmd_box_name(const imb_pkt_cmd_box_name_t *msg, uint8_t *buf, size_t max)
+    { PACK(msg, buf, max); }
+
 size_t imb_proto_pack_report_chunk(const imb_pkt_report_chunk_t *hdr,
                                    const imb_pkt_report_entry_t *entries,
                                    uint8_t *buf, size_t max)
@@ -65,6 +68,9 @@ int imb_proto_unpack_cmd_hello(const uint8_t *buf, size_t len, imb_pkt_cmd_hello
 
 int imb_proto_unpack_cmd_set_pin(const uint8_t *buf, size_t len, imb_pkt_cmd_set_pin_t *out)
     { UNPACK(imb_pkt_cmd_set_pin_t, IMB_MSG_CMD_SET_PIN, buf, len, out); }
+
+int imb_proto_unpack_cmd_box_name(const uint8_t *buf, size_t len, imb_pkt_cmd_box_name_t *out)
+    { UNPACK(imb_pkt_cmd_box_name_t, IMB_MSG_CMD_BOX_NAME, buf, len, out); }
 
 int imb_proto_unpack_report_chunk(const uint8_t *buf, size_t len,
                                   imb_pkt_report_chunk_t *hdr_out,
