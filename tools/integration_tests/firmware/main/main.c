@@ -28,6 +28,8 @@
 #include "esp_sleep.h"
 #include "nvs_flash.h"
 #include "nvs.h"
+#include "imb_buzzer.h"
+#include "imb_buzzer_ledc.h"
 
 /* ------------------------------------------------------------------ */
 /* Pin config (hardware.md)                                            */
@@ -436,6 +438,55 @@ static int ntag_read_pages(int cs, uint8_t start_page, uint8_t out[16])
 }
 
 /* ------------------------------------------------------------------ */
+/* TEST 0 — Buzzer: LEDC init + all six patterns complete             */
+/* ------------------------------------------------------------------ */
+
+#define BUZZER_WAIT_MS(ms) vTaskDelay(pdMS_TO_TICKS(ms))
+
+static void test_buzzer(void)
+{
+    imb_buzzer_hal_t hal = imb_buzzer_ledc_init();
+    imb_buzzer_init(&hal);
+    printf("[PASS] buzzer_init\n");
+
+    /* Each wait is pattern total duration + 150 ms margin */
+    imb_buzzer_play(IMB_BUZZ_TAG_PLACED);
+    BUZZER_WAIT_MS(200);   /* 50 ms pattern */
+    printf(imb_buzzer_is_idle() ? "[PASS] buzzer_tag_placed\n"
+                                : "[FAIL] buzzer_tag_placed: not idle\n");
+
+    imb_buzzer_play(IMB_BUZZ_ITEM_REMOVED);
+    BUZZER_WAIT_MS(350);   /* 50+50+50 ms pattern */
+    printf(imb_buzzer_is_idle() ? "[PASS] buzzer_item_removed\n"
+                                : "[FAIL] buzzer_item_removed: not idle\n");
+
+    imb_buzzer_play(IMB_BUZZ_UNKNOWN_TAG);
+    BUZZER_WAIT_MS(500);   /* 300 ms pattern */
+    printf(imb_buzzer_is_idle() ? "[PASS] buzzer_unknown_tag\n"
+                                : "[FAIL] buzzer_unknown_tag: not idle\n");
+
+    imb_buzzer_play(IMB_BUZZ_ERROR);
+    BUZZER_WAIT_MS(600);   /* 80+40+80+40+80 = 320 ms pattern */
+    printf(imb_buzzer_is_idle() ? "[PASS] buzzer_error\n"
+                                : "[FAIL] buzzer_error: not idle\n");
+
+    imb_buzzer_play(IMB_BUZZ_BLE_CONNECTED);
+    BUZZER_WAIT_MS(400);   /* 80+30+80 = 190 ms pattern */
+    printf(imb_buzzer_is_idle() ? "[PASS] buzzer_ble_connected\n"
+                                : "[FAIL] buzzer_ble_connected: not idle\n");
+
+    imb_buzzer_play(IMB_BUZZ_FACTORY_RESET);
+    BUZZER_WAIT_MS(100);   /* continuous — must NOT be idle yet */
+    if (imb_buzzer_is_idle()) {
+        printf("[FAIL] buzzer_factory_reset: went idle before silence\n");
+    } else {
+        imb_buzzer_silence();
+        printf(imb_buzzer_is_idle() ? "[PASS] buzzer_factory_reset\n"
+                                    : "[FAIL] buzzer_factory_reset: not idle after silence\n");
+    }
+}
+
+/* ------------------------------------------------------------------ */
 /* TEST 1 — NVS write / read / erase                                  */
 /* ------------------------------------------------------------------ */
 static void test_nvs(void)
@@ -657,6 +708,7 @@ void app_main(void)
         printf("[INFO] PN532 probe failed — tag_write will likely skip\n");
     pn532_init(PIN_CS1);
 
+    test_buzzer();
     test_nvs();
     test_tag_write(PIN_CS1);
 

@@ -27,10 +27,17 @@ _CYN  = '\033[96m'; _BOLD = '\033[1m';  _DIM  = '\033[2m';  _RST = '\033[0m'
 DEFAULT_PORT = '/dev/cu.usbserial-A5069RR4'
 
 ALL_TESTS = [
-    ('nvs_write_read', 'NVS write + read back'),
-    ('nvs_erase',      'NVS erase + verify gone'),
-    ('tag_write',      'Tag write + readback  (MIFARE Classic 1K or NTAG213)'),
-    ('deep_sleep',     'Deep sleep 3 s timer + wakeup cause check'),
+    ('buzzer_init',          'Buzzer LEDC + FreeRTOS timer init'),
+    ('buzzer_tag_placed',    'TAG_PLACED pattern drains to idle'),
+    ('buzzer_item_removed',  'ITEM_REMOVED 2-beep pattern drains to idle'),
+    ('buzzer_unknown_tag',   'UNKNOWN_TAG long beep drains to idle'),
+    ('buzzer_error',         'ERROR 3-beep pattern drains to idle'),
+    ('buzzer_ble_connected', 'BLE_CONNECTED rising chirp drains to idle'),
+    ('buzzer_factory_reset', 'FACTORY_RESET continuous; stops on silence()'),
+    ('nvs_write_read',       'NVS write + read back'),
+    ('nvs_erase',            'NVS erase + verify gone'),
+    ('tag_write',            'Tag write + readback  (MIFARE Classic 1K or NTAG213)'),
+    ('deep_sleep',           'Deep sleep 3 s timer + wakeup cause check'),
 ]
 
 

@@ -21,3 +21,6 @@ typedef enum {
 void imb_buzzer_init(const imb_buzzer_hal_t *hal);
 void imb_buzzer_play(imb_buzzer_pattern_e pattern);
 void imb_buzzer_silence(void);
+
+/* Returns 1 when no pattern is playing (all steps drained or silenced). */
+int  imb_buzzer_is_idle(void);

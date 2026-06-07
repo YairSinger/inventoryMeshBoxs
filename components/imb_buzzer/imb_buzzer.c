@@ -41,7 +41,8 @@ typedef struct {
     const buzz_step_t *steps;
     int                n_steps;
     int                cur;
-    int                in_gap;   /* 1 = currently in gap between beeps */
+    int                in_gap;    /* 1 = currently in gap between beeps */
+    int                continuous; /* 1 = FACTORY_RESET tone, no auto-stop */
 } buzzer_state_t;
 
 static imb_buzzer_hal_t g_hal;
@@ -70,8 +71,9 @@ static void on_duration_done(void *arg)
     if (g_state.steps[cur].gap_ms > 0) {
         g_state.in_gap = 1;
         g_hal.schedule_ms(g_state.steps[cur].gap_ms, on_gap_done, NULL);
+    } else {
+        g_state.steps = NULL;   /* pattern complete → idle */
     }
-    /* else: last step, done */
 }
 
 static void on_gap_done(void *arg)
@@ -112,8 +114,7 @@ void imb_buzzer_play(imb_buzzer_pattern_e pattern)
         g_state.n_steps = 2;
         break;
     case IMB_BUZZ_FACTORY_RESET:
-        g_state.steps   = NULL;
-        g_state.n_steps = 0;
+        g_state.continuous = 1;
         g_hal.tone(800);
         return;
     }
@@ -124,5 +125,11 @@ void imb_buzzer_silence(void)
 {
     g_hal.cancel();
     g_hal.silence();
-    g_state = (buzzer_state_t){0};
+    g_state.steps      = NULL;
+    g_state.continuous = 0;
+}
+
+int imb_buzzer_is_idle(void)
+{
+    return (g_state.steps == NULL && !g_state.continuous);
 }
