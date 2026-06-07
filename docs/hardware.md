@@ -10,6 +10,7 @@
 | NFC Tags | NTAG213 (13.56MHz) | passive |
 | Lid trigger (proto) | BOOT button GPIO0 / HC-SR04 | GPIO0 active-low |
 | LED | WS2812B onboard GPIO48 | RMT peripheral |
+| Buzzer | Passive buzzer 12mm (1.5–6V, SKU A61-B15) | GPIO17 (LEDC PWM) |
 | Master box screen | OLED SSD1306 0.96" | I2C |
 | Master box input | 3x tactile buttons | GPIO |
 | Power (proto) | USB power bank | USB-C |
@@ -33,6 +34,7 @@
 | Button SELECT (master) | 15 | |
 | Button BACK (master) | 16 | |
 | Lid trigger (proto) | 0 | BOOT button, active-low |
+| Buzzer | 17 | passive buzzer, LEDC PWM, direct drive |
 
 GPIO 19 and 20 are reserved for USB — do not use.
 
