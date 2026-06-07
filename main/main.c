@@ -1,258 +1,229 @@
+/* LED Color Contract Demo — WS2812B on GPIO 48
+ * Cycles through every pattern in docs/protocols.md, 5s each, with serial print.
+ * RMT TX channel, 10 MHz clock (100ns/tick), GRB byte order. */
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "driver/gpio.h"
-#include "rom/ets_sys.h"
+#include "driver/rmt_tx.h"
+#include "esp_check.h"
 
-#define PIN_MOSI  11
-#define PIN_MISO  13
-#define PIN_SCK   12
-#define PIN_CS1   10
-#define PIN_CS2    9
+#define LED_GPIO     48
+#define RMT_RES_HZ   10000000   /* 10 MHz → 100 ns / tick */
 
-#define PN532_SPI_STATREAD  0x02
-#define PN532_SPI_DATAWRITE 0x01
-#define PN532_SPI_DATAREAD  0x03
+/* WS2812B timing in 100 ns ticks */
+#define WS_T0H   4   /* 400 ns */
+#define WS_T0L   9   /* 900 ns */
+#define WS_T1H   8   /* 800 ns */
+#define WS_T1L   5   /* 500 ns */
+#define WS_RST   500 /* 50 µs low reset */
 
-static const uint8_t cmd_get_fw[] = {
-    0x00, 0x00, 0xFF, 0x02, 0xFE, 0xD4, 0x02, 0x2A, 0x00
-};
+/* ------------------------------------------------------------------ */
+/* Encoder                                                             */
+/* ------------------------------------------------------------------ */
+typedef struct {
+    rmt_encoder_t     base;
+    rmt_encoder_t    *bytes_encoder;
+    rmt_encoder_t    *copy_encoder;
+    rmt_symbol_word_t reset_sym;
+    int               state;
+} ws2812_encoder_t;
 
-/* SAMConfiguration: NormalMode, no timeout, no IRQ.
- * Must be sent after power-on before any RF command or the RF field stays inactive. */
-static const uint8_t cmd_sam_config[] = {
-    0x00, 0x00, 0xFF, 0x05, 0xFB,
-    0xD4, 0x14, 0x01, 0x00, 0x00,
-    0x17, 0x00
-};
-
-/* RFConfiguration: MaxRetries item (0x05), MxRtyPassiveActivation=3.
- * Limits InListPassiveTarget to 3 attempts so it returns quickly when
- * no tag is present instead of blocking indefinitely. */
-static const uint8_t cmd_rfconfig_retries[] = {
-    0x00, 0x00, 0xFF, 0x06, 0xFA,
-    0xD4, 0x32, 0x05, 0xFF, 0xFF, 0x03,
-    0xF4, 0x00
-};
-
-/* InListPassiveTarget: MaxTg=1, BrTy=0x00 (106 kbps ISO14443A) */
-static const uint8_t cmd_14443a[] = {
-    0x00, 0x00, 0xFF, 0x04, 0xFC,
-    0xD4, 0x4A, 0x01, 0x00,
-    0xE1, 0x00
-};
-
-/* bit-bang SPI, LSB-first, mode 0 — PN532 is natively LSB-first */
-static uint8_t bb_byte(uint8_t out)
+static size_t ws2812_encode(rmt_encoder_t *encoder, rmt_channel_handle_t ch,
+                             const void *data, size_t len, rmt_encode_state_t *out_state)
 {
-    uint8_t in = 0;
-    for (int i = 0; i < 8; i++) {
-        gpio_set_level(PIN_MOSI, (out >> i) & 1);
-        ets_delay_us(2);
-        gpio_set_level(PIN_SCK, 1);
-        ets_delay_us(2);
-        if (gpio_get_level(PIN_MISO)) in |= (1 << i);
-        gpio_set_level(PIN_SCK, 0);
-        ets_delay_us(2);
-    }
-    return in;
-}
+    ws2812_encoder_t *enc = __containerof(encoder, ws2812_encoder_t, base);
+    rmt_encode_state_t sub = RMT_ENCODING_RESET;
+    size_t n = 0;
 
-static void bb_write(int cs_pin, const uint8_t *buf, size_t len)
-{
-    gpio_set_level(cs_pin, 0);
-    ets_delay_us(5);
-    for (size_t i = 0; i < len; i++) bb_byte(buf[i]);
-    ets_delay_us(5);
-    gpio_set_level(cs_pin, 1);
-}
-
-static uint8_t bb_read_ex(int cs_pin, uint8_t cmd, uint8_t *rx, size_t len)
-{
-    gpio_set_level(cs_pin, 0);
-    ets_delay_us(5);
-    uint8_t opcode_miso = bb_byte(cmd);
-    for (size_t i = 0; i < len; i++) rx[i] = bb_byte(0x00);
-    ets_delay_us(5);
-    gpio_set_level(cs_pin, 1);
-    return opcode_miso;
-}
-
-static void bb_read(int cs_pin, uint8_t cmd, uint8_t *rx, size_t len)
-{
-    bb_read_ex(cs_pin, cmd, rx, len);
-}
-
-/* Poll STATREAD until ready, with a bounded retry count and explicit yield. */
-static int wait_ready(int cs_pin, int max_tries, int delay_ms)
-{
-    for (int i = 0; i < max_tries; i++) {
-        uint8_t s = 0;
-        bb_read(cs_pin, PN532_SPI_STATREAD, &s, 1);
-        if (s == 0x01) return 1;
-        vTaskDelay(pdMS_TO_TICKS(delay_ms));
-    }
-    return 0;
-}
-
-/* Wakeup pulse: CS low for ≥ tOSC_START (max 2ms). 10ms gives margin;
- * 5ms gap after lets the PN532 oscillator settle before the next transaction. */
-static void wakeup(int cs_pin)
-{
-    gpio_set_level(cs_pin, 0);
-    vTaskDelay(pdMS_TO_TICKS(10));
-    gpio_set_level(cs_pin, 1);
-    vTaskDelay(pdMS_TO_TICKS(5));
-}
-
-static void probe(int cs_pin, int num)
-{
-    printf("[PN532 #%d] == probe start ==\n", num);
-
-    wakeup(cs_pin);
-
-    uint8_t wbuf[sizeof(cmd_get_fw) + 1];
-    wbuf[0] = PN532_SPI_DATAWRITE;
-    memcpy(wbuf + 1, cmd_get_fw, sizeof(cmd_get_fw));
-    bb_write(cs_pin, wbuf, sizeof(wbuf));
-    printf("[PN532 #%d] command sent\n", num);
-
-    int ready = 0;
-    for (int i = 0; i < 100; i++) {
-        uint8_t opcode_miso = 0, status = 0;
-        opcode_miso = bb_read_ex(cs_pin, PN532_SPI_STATREAD, &status, 1);
-        if (status == 0x01) { ready = 1; break; }
-        if (opcode_miso == 0x01) {
-            uint8_t ack_tail[5] = {0};
-            bb_read(cs_pin, PN532_SPI_DATAREAD, ack_tail, 5);
-            ready = 2;
-            break;
+    switch (enc->state) {
+    case 0:
+        n += enc->bytes_encoder->encode(enc->bytes_encoder, ch, data, len, &sub);
+        if (sub & RMT_ENCODING_COMPLETE) enc->state = 1;
+        if (sub & RMT_ENCODING_MEM_FULL) { *out_state |= RMT_ENCODING_MEM_FULL; return n; }
+        /* fall through */
+    case 1:
+        n += enc->copy_encoder->encode(enc->copy_encoder, ch,
+                                       &enc->reset_sym, sizeof(enc->reset_sym), &sub);
+        if (sub & RMT_ENCODING_COMPLETE) {
+            enc->state = 0;
+            *out_state |= RMT_ENCODING_COMPLETE;
         }
-        vTaskDelay(pdMS_TO_TICKS(10));
+        if (sub & RMT_ENCODING_MEM_FULL) *out_state |= RMT_ENCODING_MEM_FULL;
+        break;
     }
-
-    if (ready == 1) {
-        uint8_t ack[6] = {0};
-        bb_read(cs_pin, PN532_SPI_DATAREAD, ack, 6);
-    }
-
-    if (!wait_ready(cs_pin, 100, 5)) {
-        printf("[PN532 #%d] FAIL — response timeout\n", num);
-        return;
-    }
-
-    uint8_t resp[20] = {0};
-    bb_read(cs_pin, PN532_SPI_DATAREAD, resp, 20);
-
-    for (int i = 0; i < 18; i++) {
-        if (resp[i] == 0xD5 && resp[i+1] == 0x03) {
-            printf("[PN532 #%d] OK  IC=0x%02X  Ver=%d  Rev=%d\n",
-                   num, resp[i+2], resp[i+3], resp[i+4]);
-            return;
-        }
-    }
-    printf("[PN532 #%d] FAIL — D5 03 not found\n", num);
+    return n;
 }
 
-static void send_cmd_read_ack_resp(int cs_pin, const uint8_t *cmd, size_t cmd_len,
-                                   uint8_t *resp, size_t resp_len)
+static esp_err_t ws2812_del(rmt_encoder_t *encoder)
 {
-    uint8_t wbuf[64];
-    wbuf[0] = PN532_SPI_DATAWRITE;
-    memcpy(wbuf + 1, cmd, cmd_len);
-    bb_write(cs_pin, wbuf, cmd_len + 1);
-
-    if (!wait_ready(cs_pin, 50, 10)) return;
-    uint8_t ack[6] = {0};
-    bb_read(cs_pin, PN532_SPI_DATAREAD, ack, 6);
-
-    if (!wait_ready(cs_pin, 50, 10)) return;
-    bb_read(cs_pin, PN532_SPI_DATAREAD, resp, resp_len);
+    ws2812_encoder_t *enc = __containerof(encoder, ws2812_encoder_t, base);
+    rmt_del_encoder(enc->bytes_encoder);
+    rmt_del_encoder(enc->copy_encoder);
+    free(enc);
+    return ESP_OK;
 }
 
-static void sam_config(int cs_pin)
+static esp_err_t ws2812_reset_enc(rmt_encoder_t *encoder)
 {
-    uint8_t resp[8] = {0};
-    send_cmd_read_ack_resp(cs_pin, cmd_sam_config, sizeof(cmd_sam_config), resp, sizeof(resp));
+    ws2812_encoder_t *enc = __containerof(encoder, ws2812_encoder_t, base);
+    rmt_encoder_reset(enc->bytes_encoder);
+    rmt_encoder_reset(enc->copy_encoder);
+    enc->state = 0;
+    return ESP_OK;
 }
 
-static void rfconfig_retries(int cs_pin)
+static esp_err_t ws2812_new_encoder(rmt_encoder_handle_t *ret)
 {
-    uint8_t resp[8] = {0};
-    send_cmd_read_ack_resp(cs_pin, cmd_rfconfig_retries, sizeof(cmd_rfconfig_retries), resp, sizeof(resp));
+    ws2812_encoder_t *enc = calloc(1, sizeof(*enc));
+    if (!enc) return ESP_ERR_NO_MEM;
+
+    enc->base.encode = ws2812_encode;
+    enc->base.del    = ws2812_del;
+    enc->base.reset  = ws2812_reset_enc;
+
+    rmt_bytes_encoder_config_t bcfg = {
+        .bit0 = { .level0 = 1, .duration0 = WS_T0H,
+                  .level1 = 0, .duration1 = WS_T0L },
+        .bit1 = { .level0 = 1, .duration0 = WS_T1H,
+                  .level1 = 0, .duration1 = WS_T1L },
+        .flags.msb_first = 1,
+    };
+    ESP_RETURN_ON_ERROR(rmt_new_bytes_encoder(&bcfg, &enc->bytes_encoder),
+                        "LED", "bytes encoder");
+
+    rmt_copy_encoder_config_t ccfg = {};
+    ESP_RETURN_ON_ERROR(rmt_new_copy_encoder(&ccfg, &enc->copy_encoder),
+                        "LED", "copy encoder");
+
+    enc->reset_sym.level0    = 0;
+    enc->reset_sym.duration0 = WS_RST / 2;
+    enc->reset_sym.level1    = 0;
+    enc->reset_sym.duration1 = WS_RST / 2;
+
+    *ret = &enc->base;
+    return ESP_OK;
 }
 
-/* Returns 1 if a tag was found and printed, 0 if no tag in field. */
-static int scan_tag(int cs_pin, int num)
+/* ------------------------------------------------------------------ */
+/* Low-level helpers                                                   */
+/* ------------------------------------------------------------------ */
+static rmt_channel_handle_t s_ch;
+static rmt_encoder_handle_t s_enc;
+static const rmt_transmit_config_t s_tx_cfg = { .loop_count = 0 };
+
+typedef struct { uint8_t g, r, b; } grb_t;
+
+static void led_set(grb_t px)
 {
-    wakeup(cs_pin);
+    rmt_transmit(s_ch, s_enc, &px, sizeof(px), &s_tx_cfg);
+    rmt_tx_wait_all_done(s_ch, portMAX_DELAY);
+}
 
-    uint8_t wbuf[sizeof(cmd_14443a) + 1];
-    wbuf[0] = PN532_SPI_DATAWRITE;
-    memcpy(wbuf + 1, cmd_14443a, sizeof(cmd_14443a));
-    bb_write(cs_pin, wbuf, sizeof(wbuf));
+static void led_off(void) { led_set((grb_t){0, 0, 0}); }
+static void delay_ms(uint32_t ms) { vTaskDelay(pdMS_TO_TICKS(ms)); }
 
-    if (!wait_ready(cs_pin, 50, 10)) return 0;
-    uint8_t ack[6] = {0};
-    bb_read(cs_pin, PN532_SPI_DATAREAD, ack, 6);
+static uint8_t scale(uint8_t c, uint8_t bri)
+{
+    return (uint8_t)(((uint16_t)c * bri) >> 8);
+}
 
-    if (!wait_ready(cs_pin, 50, 10)) return 0;
-
-    uint8_t resp[32] = {0};
-    bb_read(cs_pin, PN532_SPI_DATAREAD, resp, sizeof(resp));
-
-    for (int i = 0; i < 28; i++) {
-        if (resp[i] == 0xD5 && resp[i+1] == 0x4B) {
-            if (resp[i+2] == 0) return 0;
-            uint8_t uid_len = resp[i+7];
-            printf("[PN532 #%d] TAG  ATQA=%02X%02X SAK=%02X UID(%d):",
-                   num, resp[i+4], resp[i+5], resp[i+6], uid_len);
-            for (int j = 0; j < uid_len && j < 10; j++)
-                printf(" %02X", resp[i+8+j]);
-            printf("\n");
-            return 1;
-        }
+static void breathe(grb_t colour, uint32_t period_ms, uint32_t total_ms)
+{
+    uint32_t step_ms = 20, elapsed = 0;
+    while (elapsed < total_ms) {
+        uint32_t phase = (elapsed % period_ms) * 512 / period_ms;
+        uint8_t bri = (phase < 256) ? (uint8_t)phase : (uint8_t)(511 - phase);
+        led_set((grb_t){scale(colour.g, bri), scale(colour.r, bri), scale(colour.b, bri)});
+        delay_ms(step_ms);
+        elapsed += step_ms;
     }
-    return 0;
 }
 
+/* ------------------------------------------------------------------ */
+/* Pattern library (docs/protocols.md LED Color Contract)             */
+/* ------------------------------------------------------------------ */
+static void pat_insert(void)
+{
+    puts("[LED] Item inserted — GREEN single pulse");
+    led_set((grb_t){200, 0, 0}); delay_ms(300); led_off(); delay_ms(4700);
+}
+static void pat_extract(void)
+{
+    puts("[LED] Item extracted — RED single pulse");
+    led_set((grb_t){0, 200, 0}); delay_ms(300); led_off(); delay_ms(4700);
+}
+static void pat_ambiguous(void)
+{
+    puts("[LED] AMBIGUOUS scan — YELLOW single flash");
+    led_set((grb_t){180, 180, 0}); delay_ms(200); led_off(); delay_ms(4800);
+}
+static void pat_reg_pass(void)
+{
+    puts("[LED] Registration pass (NDEF written) — SOLID GREEN 2 s");
+    led_set((grb_t){200, 0, 0}); delay_ms(2000); led_off(); delay_ms(3000);
+}
+static void pat_reg_fail(void)
+{
+    puts("[LED] Registration fail (NDEF write error) — RED double-flash");
+    grb_t red = {0, 200, 0};
+    led_set(red); delay_ms(200); led_off(); delay_ms(200);
+    led_set(red); delay_ms(200); led_off(); delay_ms(4400);
+}
+static void pat_mesh_disco(void)
+{
+    puts("[LED] Mesh disconnected — BLUE slow breathing");
+    breathe((grb_t){0, 0, 200}, 2000, 5000); led_off();
+}
+static void pat_ble_idle(void)
+{
+    puts("[LED] BLE connected idle — WHITE dim pulse every 3 s");
+    grb_t white = {60, 60, 60};
+    for (int i = 0; i < 2; i++) {
+        led_set(white); delay_ms(300); led_off(); delay_ms(2700);
+    }
+}
+static void pat_factory_hold(void)
+{
+    puts("[LED] Factory reset hold (BOOT 10 s) — SLOW RED breathing");
+    breathe((grb_t){0, 200, 0}, 3000, 5000); led_off();
+}
+static void pat_factory_fire(void)
+{
+    puts("[LED] Factory reset triggered — FAST RED flash (no reboot in demo)");
+    grb_t red = {0, 200, 0};
+    for (int i = 0; i < 10; i++) { led_set(red); delay_ms(250); led_off(); delay_ms(250); }
+}
+static void pat_sleep(void)
+{
+    puts("[LED] Deep sleep — OFF");
+    led_off(); delay_ms(5000);
+}
+
+/* ------------------------------------------------------------------ */
+/* app_main                                                            */
+/* ------------------------------------------------------------------ */
 void app_main(void)
 {
-    printf("\n=== IMB Phase 1 — PN532 bit-bang SPI + tag scan ===\n");
+    printf("\n=== IMB LED Color Contract Demo (GPIO %d) ===\n", LED_GPIO);
+    printf("Each pattern held for 5 s. See docs/protocols.md.\n\n");
 
-    gpio_config_t out_cfg = {
-        .pin_bit_mask  = (1ULL << PIN_MOSI) | (1ULL << PIN_SCK)
-                       | (1ULL << PIN_CS1)  | (1ULL << PIN_CS2),
-        .mode          = GPIO_MODE_OUTPUT,
+    rmt_tx_channel_config_t ch_cfg = {
+        .gpio_num          = LED_GPIO,
+        .clk_src           = RMT_CLK_SRC_DEFAULT,
+        .resolution_hz     = RMT_RES_HZ,
+        .mem_block_symbols = 64,
+        .trans_queue_depth = 4,
     };
-    gpio_config(&out_cfg);
-
-    gpio_config_t in_cfg = {
-        .pin_bit_mask  = (1ULL << PIN_MISO),
-        .mode          = GPIO_MODE_INPUT,
-        .pull_up_en    = GPIO_PULLUP_ENABLE,
-    };
-    gpio_config(&in_cfg);
-
-    gpio_set_level(PIN_CS1, 1);
-    gpio_set_level(PIN_CS2, 1);
-
-    vTaskDelay(pdMS_TO_TICKS(1000));
-    probe(PIN_CS1, 1);
-    probe(PIN_CS2, 2);
-
-    sam_config(PIN_CS1);
-    sam_config(PIN_CS2);
-
-    rfconfig_retries(PIN_CS1);
-    rfconfig_retries(PIN_CS2);
-
-    printf("=== Scanning for tags... ===\n");
+    ESP_ERROR_CHECK(rmt_new_tx_channel(&ch_cfg, &s_ch));
+    ESP_ERROR_CHECK(ws2812_new_encoder(&s_enc));
+    ESP_ERROR_CHECK(rmt_enable(s_ch));
 
     while (1) {
-        scan_tag(PIN_CS1, 1);
-        scan_tag(PIN_CS2, 2);
-        vTaskDelay(pdMS_TO_TICKS(200));
+        pat_insert(); pat_extract(); pat_ambiguous();
+        pat_reg_pass(); pat_reg_fail(); pat_mesh_disco();
+        pat_ble_idle(); pat_factory_hold(); pat_factory_fire(); pat_sleep();
+        printf("\n--- Cycle complete, restarting ---\n\n");
     }
 }

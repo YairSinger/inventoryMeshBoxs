@@ -28,7 +28,7 @@ struct __attribute__((packed)) {
     uint16_t company_id;   // 0xFFFF (test/internal — change when assigned NXP ID)
     uint32_t pin_hash;     // CRC32 of user-set PIN; 0 in SETUP mode
     uint8_t  op_mode;      // imb_op_mode_e: SETUP=0, FIELD_CHECK=1, REGISTRATION=2, REGISTRATION_INCOMPLETE=3
-    uint8_t  flags;        // bit 0: has unread report; bit 1: registration paused (grace window)
+    uint8_t  mesh_epoch;   // bit 7: unread report; bit 6: reg paused; bit 5-0: epoch counter
 };
 ```
 
@@ -43,7 +43,7 @@ on_scan_result(adv):
         show_setup_card(adv)
     else if adv.mfg_data.pin_hash == my_mesh.pin_hash:
         // belongs to my mesh
-        show_box_card(adv.name, adv.mfg_data.op_mode, adv.mfg_data.flags)
+        show_box_card(adv.name, adv.mfg_data.op_mode, adv.mfg_data.mesh_epoch)
     else:
         // different mesh — hide from main UI
         ignore()
@@ -133,7 +133,7 @@ Every connect, every time:
 ### 3.4 Mid-session disconnect during REGISTRATION
 
 If phone disconnects while in REGISTRATION:
-- Box keeps session state in RAM for a **60 s grace window**, advertising `flags.bit1 = 1` (registration paused).
+- Box keeps session state in RAM for a **60 s grace window**, advertising `mesh_epoch.bit6 = 1` (registration paused).
 - Phone reconnects within 60 s → box auto-resumes; re-fires pending EVENT_TAGs (the unnamed UIDs).
 - Grace window expires AND no pending unnamed UIDs → box transitions to FIELD_CHECK.
 - Grace window expires AND pending unnamed UIDs exist → box transitions to `REGISTRATION_INCOMPLETE` (persisted to NVS, survives reboot). See §6.4.
@@ -154,7 +154,7 @@ If the delta is empty (nothing changed since last check), the box stays silent �
 
 ## 4. Wire protocol (recap + additions)
 
-Most struct definitions live in `imb_protocol.h`. Below is the **complete final message list**, including new messages added during this design phase. Items marked **[NEW]** are not yet in the source file.
+Most struct definitions live in `imb_protocol.h`. Below is the **complete final message list**.
 
 ### 4.1 Message types
 
@@ -162,17 +162,20 @@ Most struct definitions live in `imb_protocol.h`. Below is the **complete final 
 |---|---|---|---|
 | 0x01 | `EVENT_TAG` | box → phone | Tag insert/extract/ambiguous |
 | 0x02 | `EVENT_MODE` | box → phone | Mode transitioned |
-| 0x03 | `REPORT_CHUNK` **[NEW]** | box → phone | Fragmented delta report; replaces single-shot REPORT |
-| 0x04 | `EVENT_ACK` **[NEW]** | box → phone | Application-level ACK to a CMD_* |
-| 0x05 | `EVENT_DROPPED` **[NEW]** | box → phone | N events dropped during connect→subscribe window |
+| 0x03 | `REPORT_CHUNK` | box → phone | Fragmented delta report |
+| 0x04 | `EVENT_ACK` | box → phone | Application-level ACK to a CMD_* |
+| 0x05 | `EVENT_DROPPED` | box → phone | N events dropped during connect→subscribe window |
+| 0x06 | `EVENT_LOG_CHUNK` | box → phone | Fragmented transaction log replay |
 | 0x10 | `CMD_MODE` | phone → box | Set op_mode |
 | 0x11 | `CMD_NAME` | phone → box | Assign name to a scanned UID; triggers NDEF write |
 | 0x12 | `CMD_ACCEPT` | phone → box | Accept (1) or reject (0) a foreign tag |
-| 0x13 | `CMD_HELLO` **[NEW]** | phone → box | Mandatory first message; carries pin_hash |
-| 0x14 | `CMD_SET_PIN` **[NEW]** | phone → box | First-time PIN provisioning (SETUP mode only) |
-| 0x15 | `CMD_REPORT_ACK` **[NEW]** | phone → box | Acknowledge receipt of a report chunk |
-| 0x16 | `CMD_REPORT_NACK` **[NEW]** | phone → box | Request resend of a specific report chunk |
-| 0x17 | `CMD_UNBOND` **[NEW]** | phone → box | Erase this phone's bond from box (optional clean-disconnect) |
+| 0x13 | `CMD_HELLO` | phone → box | Mandatory first message; carries pin_hash |
+| 0x14 | `CMD_SET_PIN` | phone → box | First-time PIN provisioning (SETUP mode only) |
+| 0x15 | `CMD_REPORT_ACK` | phone → box | Acknowledge receipt of a report chunk |
+| 0x16 | `CMD_REPORT_NACK` | phone → box | Request resend of a specific report chunk |
+| 0x17 | `CMD_UNBOND` | phone → box | Erase this phone's bond from box |
+| 0x18 | `CMD_GET_LOG` | phone → box | Pull transaction log history |
+| 0x19 | `CMD_MESH_STATUS` | phone → box | Request peer box health/RSSIs |
 
 ### 4.2 Common command header
 
@@ -229,6 +232,16 @@ typedef struct __attribute__((packed)) {
 | `UNKNOWN_UID` | 5 | (CMD_NAME / CMD_ACCEPT) UID not in pending set | Silently drop (race condition) |
 | `NOT_AUTHED` | 6 | Any command before CMD_HELLO | Phone-side bug; reconnect and retry |
 | `REGISTRATION_INCOMPLETE` | 7 | (CMD_MODE→FIELD_CHECK) Pending unnamed UIDs exist | Show "name all tags or remove from box" |
+| `LOG_OVERFLOW` | 8 | (CMD_GET_LOG) Gap fill failed; log wrapped | Perform full REPORT sync |
+
+### 4.6 Transaction Log Pull (Gap Fill)
+
+To populate the MeshView event history, the phone pulls only the events it is missing:
+
+1. Phone connects, sends `CMD_HELLO`.
+2. Phone sends `CMD_GET_LOG { last_seen_id }` where `last_seen_id` is the `seq_id` of the newest log entry the phone already has.
+3. Box returns `EVENT_ACK[OK]` followed by one or more `EVENT_LOG_CHUNK` packets.
+4. If the box's log has wrapped and the requested `last_seen_id` is gone, box returns `EVENT_ACK[LOG_OVERFLOW]`. Phone must then perform a full inventory resync via `REPORT`.
 
 ### 4.5 Phone command helper (pseudocode)
 
@@ -317,7 +330,7 @@ CMD_HELLO timeout = 5 s (covers slow first-time pairing). All others = 2 s. CMD_
 
 ### 6.4 REGISTRATION_INCOMPLETE recovery flow (phone UX)
 
-1. Phone scans, sees box advertising with `mfg_data.op_mode == REGISTRATION_INCOMPLETE`
+1. Phone scans, sees box advertising with `mfg_data.op_mode == REGISTRATION_INCOMPLETE` (and `mfg_data.mesh_epoch.bit6 == 1`)
 2. Phone displays prominent alert: "Box has N unnamed tags from a previous registration. Resume?"
 3. User taps "Resume" → phone connects, runs §3.2 connect sequence
 4. Box auto-resumes registration, re-fires EVENT_TAG for each pending UID (drained from queue on subscribe)
@@ -470,21 +483,28 @@ Phone can send `CMD_UNBOND { msg_id }` before disconnecting to ask the box to er
 
 ---
 
-## 10. Open items (not yet locked)
+## 10. Autonomous Mesh Strategy
+
+The IMB mesh is designed for autonomous operation without cloud infrastructure.
+
+- **Full Replication**: Every box mirrors the entire mesh-wide item registry (`imb_mesh` namespace) in its NVS. The phone can talk to *any* available box and receive a complete global inventory.
+- **Lid-Triggered Sync**: Boxes wake from Deep Sleep on lid-open, search for peers over ESP-Mesh, and sync local changes. If a peer is offline, the last known NVS-replicated state is used.
+- **Master Box Gateway**: The connected box acts as gateway to the mesh — it can relay `CMD_MESH_STATUS` responses and aggregate reports from peers.
+- **Large Scale Alternative**: For commercial inventories (5000+ items), pivot to "Query-on-Demand" + Light Sleep with DTIM for real-time responsiveness at the cost of battery life.
+
+## 11. Open items (not yet locked)
 
 - **UUIDs:** generate base UUID + 4 derived. Run `uuidgen` once, paste into both codebases.
 - **Mfg-data company_id:** currently `0xFFFF` (test/internal). If commercialized, request NXP Bluetooth SIG company ID.
 - **CCCD persistence across bonds:** ESP-IDF NimBLE bonding stores CCCD state automatically. Verify on first end-to-end test that a bonded reconnect doesn't require re-subscribing.
 - **Phase 2 master box:** Passkey pairing replaces Just Works once OLED is available.
-- **Phase 3 mesh:** consolidated REPORT_NOTIFY semantics (multiple boxes → one report via master); cross-box transaction broadcast (out of scope for this contract).
-- **Possible Phase 3+ pivot to commercial / large-inventory:** if pivoting to warehouse-style multi-staff use, single-client-per-box constraint may need to become multi-client-per-mesh. The mesh layer would handle authorization; per-box auth stays single-client.
 
 ---
 
-## 11. Quick reference card
+## 12. Quick reference card
 
 ```
-SCAN:    name prefix "IMB-", parse mfg-data (company_id=0xFFFF, pin_hash, op_mode, flags)
+SCAN:    name prefix "IMB-", parse mfg-data (company_id=0xFFFF, pin_hash, op_mode, mesh_epoch)
 CONNECT: pair (Just Works) → subscribe EVENT_NOTIFY → subscribe REPORT_NOTIFY → CMD_HELLO
 COMMAND: write-with-response on COMMAND_WRITE; await EVENT_ACK matching msg_id
 REPORT:  reassemble REPORT_CHUNK by report_id; NACK gaps; ACK whole report

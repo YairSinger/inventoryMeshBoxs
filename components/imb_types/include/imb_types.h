@@ -10,9 +10,10 @@
 
 /* Operational mode — persisted in NVS imb_state namespace and carried in BLE protocol. */
 typedef enum {
-    IMB_MODE_SETUP        = 0,  /* first boot, awaiting PIN + box name from phone */
-    IMB_MODE_FIELD_CHECK  = 1,  /* default after registration; lid-open triggers scan */
-    IMB_MODE_REGISTRATION = 2,  /* active registration session; tags accepted/named */
+    IMB_MODE_SETUP                    = 0,  /* first boot, awaiting PIN + box name from phone */
+    IMB_MODE_FIELD_CHECK              = 1,  /* default after registration; lid-open triggers scan */
+    IMB_MODE_REGISTRATION             = 2,  /* active registration session; tags accepted/named */
+    IMB_MODE_REGISTRATION_INCOMPLETE  = 3,  /* unnamed tags exist; sticky until resolved */
 } imb_op_mode_e;
 
 /* Shared item record used by registry, session, and delta components. */
