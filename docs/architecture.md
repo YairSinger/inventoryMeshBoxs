@@ -53,12 +53,20 @@ Five namespaces with different trust levels:
 | `imb_state` | `pending_count` | uint8 | Number of pending (unnamed) UIDs in current/sticky registration |
 | `imb_state` | `pending_uids` | array | Packed array of pending UIDs (up to `IMB_REGISTRY_MAX_ITEMS`) |
 | `imb_state` | `pending_epoch` | uint32 | Registration session id |
-| `imb_mesh` | `mesh_epoch` | uint32 | Increments at start of each registration session (Phase 3) |
-| `imb_mesh` | `item_<uid>` | struct | Mesh-wide item registry. Flagged `MESH_STALE` on epoch mismatch. (Phase 3) |
-| `imb_txlog` | `tx_<seq>` | struct | Transaction log entries (idempotent, dedupe by box_id+seq). (Phase 3) |
-| `imb_txlog` | `tx_head` | uint32 | Latest sequence number (Phase 3) |
+| `imb_mesh` | `mesh_epoch` | uint8 | Increments at start of each registration session or mesh change |
+| `imb_mesh` | `item_<uid>` | struct | Mesh-wide item registry. Flagged `MESH_STALE` on epoch mismatch. |
+| `imb_txlog` | `tx_<seq>` | struct | Transaction log entries (idempotent, dedupe by box_id+seq). |
+| `imb_txlog` | `tx_head` | uint32 | Latest sequence number |
 
 `imb_local` is always authoritative — valid even when isolated from mesh. `imb_mesh` is best-effort and must be treated as stale if `mesh_epoch` mismatches peers.
+
+## Autonomous Mesh & Full Replication
+
+The system uses an **Autonomous Mesh** architecture to ensure consistency without a central server.
+
+- **Full Replication**: Every box mirrors the entire mesh-wide item registry (`imb_mesh`) in its local NVS.
+- **Master Box Gateway**: The phone connects to any available box. That box acts as a gateway to the rest of the mesh, reporting peer status and a consolidated inventory.
+- **Design Note**: For large-scale inventories (5000+ items), the replication strategy would pivot to "Query-on-Demand" and "Light Sleep" with DTIM to ensure real-time mesh-wide responsiveness at the expense of battery life.
 
 ## Mesh Identity & PIN
 

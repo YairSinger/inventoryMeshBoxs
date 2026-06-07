@@ -28,7 +28,7 @@ struct __attribute__((packed)) {
     uint16_t company_id;   // 0xFFFF (test/internal — change when assigned NXP ID)
     uint32_t pin_hash;     // CRC32 of user-set PIN; 0 in SETUP mode
     uint8_t  op_mode;      // imb_op_mode_e: SETUP=0, FIELD_CHECK=1, REGISTRATION=2, REGISTRATION_INCOMPLETE=3
-    uint8_t  flags;        // bit 0: has unread report; bit 1: registration paused (grace window)
+    uint8_t  mesh_epoch;   // bit 7: unread report; bit 6: reg paused; bit 5-0: epoch counter
 };
 ```
 
@@ -170,17 +170,20 @@ The phone app MUST NOT manually redefine these structs. Instead:
 |---|---|---|---|
 | 0x01 | `EVENT_TAG` | box → phone | Tag insert/extract/ambiguous |
 | 0x02 | `EVENT_MODE` | box → phone | Mode transitioned |
-| 0x03 | `REPORT_CHUNK` **[NEW]** | box → phone | Fragmented delta report; replaces single-shot REPORT |
-| 0x04 | `EVENT_ACK` **[NEW]** | box → phone | Application-level ACK to a CMD_* |
-| 0x05 | `EVENT_DROPPED` **[NEW]** | box → phone | N events dropped during connect→subscribe window |
+| 0x03 | `REPORT_CHUNK` | box → phone | Fragmented delta report |
+| 0x04 | `EVENT_ACK` | box → phone | Application-level ACK to a CMD_* |
+| 0x05 | `EVENT_DROPPED` | box → phone | N events dropped during window |
+| 0x06 | `EVENT_LOG_CHUNK` | box → phone | Fragmented transaction log replay [NEW] |
 | 0x10 | `CMD_MODE` | phone → box | Set op_mode |
 | 0x11 | `CMD_NAME` | phone → box | Assign name to a scanned UID; triggers NDEF write |
 | 0x12 | `CMD_ACCEPT` | phone → box | Accept (1) or reject (0) a foreign tag |
-| 0x13 | `CMD_HELLO` **[NEW]** | phone → box | Mandatory first message; carries pin_hash |
-| 0x14 | `CMD_SET_PIN` **[NEW]** | phone → box | First-time PIN provisioning (SETUP mode only) |
-| 0x15 | `CMD_REPORT_ACK` **[NEW]** | phone → box | Acknowledge receipt of a report chunk |
-| 0x16 | `CMD_REPORT_NACK` **[NEW]** | phone → box | Request resend of a specific report chunk |
-| 0x17 | `CMD_UNBOND` **[NEW]** | phone → box | Erase this phone's bond from box (optional clean-disconnect) |
+| 0x13 | `CMD_HELLO` | phone → box | Mandatory first message; carries pin_hash |
+| 0x14 | `CMD_SET_PIN` | phone → box | First-time PIN provisioning (SETUP mode only) |
+| 0x15 | `CMD_REPORT_ACK` | phone → box | Acknowledge receipt of a report chunk |
+| 0x16 | `CMD_REPORT_NACK` | phone → box | Request resend of a specific report chunk |
+| 0x17 | `CMD_UNBOND` | phone → box | Erase this phone's bond from box |
+| 0x18 | `CMD_GET_LOG` | phone → box | Pull transaction log history [NEW] |
+| 0x19 | `CMD_MESH_STATUS` | phone → box | Request peer box health/RSSIs [NEW] |
 
 ### 4.2 Common command header
 
@@ -237,6 +240,16 @@ typedef struct __attribute__((packed)) {
 | `UNKNOWN_UID` | 5 | (CMD_NAME / CMD_ACCEPT) UID not in pending set | Silently drop (race condition) |
 | `NOT_AUTHED` | 6 | Any command before CMD_HELLO | Phone-side bug; reconnect and retry |
 | `REGISTRATION_INCOMPLETE` | 7 | (CMD_MODE→FIELD_CHECK) Pending unnamed UIDs exist | Show "name all tags or remove from box" |
+| `LOG_OVERFLOW` | 8 | (CMD_GET_LOG) Gap fill failed; log wrapped | Perform full REPORT sync |
+
+### 4.6 Transaction Log Pull (Gap Fill) [NEW]
+
+To populate the MeshView event history, the phone app pulls only the events it is missing:
+
+1. Phone connects, sends `CMD_HELLO`.
+2. Phone sends `CMD_GET_LOG { last_seen_id }` where `last_seen_id` is the `seq_id` of the newest log entry in the phone's local database.
+3. Box returns `EVENT_ACK[OK]` followed by one or more `EVENT_LOG_CHUNK` packets.
+4. If the box's log has wrapped and the requested `last_seen_id` is gone, box returns `EVENT_ACK[LOG_OVERFLOW]`. Phone must then perform a full inventory resync via `REPORT`.
 
 ### 4.5 Phone command helper (pseudocode)
 
@@ -478,14 +491,20 @@ Phone can send `CMD_UNBOND { msg_id }` before disconnecting to ask the box to er
 
 ---
 
-## 10. Open items (not yet locked)
+## 10. Autonomous Mesh Strategy (Option B)
+
+The IMB Mesh is designed for autonomous operation and eventual cloud/WiFi integration.
+
+- **Full Replication**: Every box in the mesh mirrors the entire mesh-wide item registry (`imb_mesh` namespace) in its NVS. This allows the phone to talk to *any* available box (the "Master" for that session) and receive a complete global inventory.
+- **Lid-Triggered Sync**: Boxes wake from Deep Sleep when their lid is opened. They search for peers over ESP-Mesh and sync any local changes. If a peer is offline, the last known state from NVS replication is used.
+- **Large Scale Alternative**: For commercial inventories (5000+ items), the replication strategy would pivot to "Query-on-Demand" and "Light Sleep" with DTIM to ensure real-time mesh-wide responsiveness at the expense of battery life.
+
+## 11. Open items (not yet locked)
 
 - **UUIDs:** generate base UUID + 4 derived. Run `uuidgen` once, paste into both codebases.
 - **Mfg-data company_id:** currently `0xFFFF` (test/internal). If commercialized, request NXP Bluetooth SIG company ID.
 - **CCCD persistence across bonds:** ESP-IDF NimBLE bonding stores CCCD state automatically. Verify on first end-to-end test that a bonded reconnect doesn't require re-subscribing.
 - **Phase 2 master box:** Passkey pairing replaces Just Works once display is available.
-- **Phase 3 mesh:** consolidated REPORT_NOTIFY semantics (multiple boxes → one report via master); cross-box transaction broadcast (out of scope for this contract).
-- **Possible Phase 3+ pivot to commercial / large-inventory:** if pivoting to warehouse-style multi-staff use, single-client-per-box constraint may need to become multi-client-per-mesh. The mesh layer would handle authorization; per-box auth stays single-client.
 
 ---
 
