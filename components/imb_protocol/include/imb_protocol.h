@@ -164,6 +164,13 @@ typedef struct __attribute__((packed)) {
     uint8_t  mesh_epoch;   /* bit 7: unread report; bit 6: reg paused; bit 5-0: epoch counter */
 } imb_pkt_adv_t;
 
+/* 
+ * DESIGN NOTE: For large-scale / commercial inventories (e.g. 5000+ items):
+ * 1. Switch from "Full Replication" to "Query-on-Demand".
+ * 2. Use "Light Sleep" with DTIM (WiFi radio stays listening) to allow 
+ *    instant mesh-wide wakeups/interactivity at the cost of battery life.
+ */
+
 /* BLE UUIDs (Locked 2026-05-27) */
 #define IMB_SERVICE_UUID        "e5d50000-01d0-47e0-afc5-01e466d9298e"
 #define IMB_CHAR_EVENT_NOTIFY   "e5d50001-01d0-47e0-afc5-01e466d9298e"

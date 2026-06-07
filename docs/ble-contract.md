@@ -237,10 +237,10 @@ typedef struct __attribute__((packed)) {
 
 ### 4.6 Transaction Log Pull (Gap Fill)
 
-To populate the MeshView event history, the phone pulls only the events it is missing:
+To populate the MeshView event history, the phone app pulls only the events it is missing:
 
 1. Phone connects, sends `CMD_HELLO`.
-2. Phone sends `CMD_GET_LOG { last_seen_id }` where `last_seen_id` is the `seq_id` of the newest log entry the phone already has.
+2. Phone sends `CMD_GET_LOG { last_seen_id }` where `last_seen_id` is the `seq_id` of the newest log entry in the phone's local database.
 3. Box returns `EVENT_ACK[OK]` followed by one or more `EVENT_LOG_CHUNK` packets.
 4. If the box's log has wrapped and the requested `last_seen_id` is gone, box returns `EVENT_ACK[LOG_OVERFLOW]`. Phone must then perform a full inventory resync via `REPORT`.
 
@@ -515,8 +515,6 @@ The IMB mesh is designed for autonomous operation without cloud infrastructure.
 - **Mfg-data company_id:** currently `0xFFFF` (test/internal). If commercialized, request NXP Bluetooth SIG company ID.
 - **CCCD persistence across bonds:** ESP-IDF NimBLE bonding stores CCCD state automatically. Verify on first end-to-end test that a bonded reconnect doesn't require re-subscribing.
 - **Phase 2 master box:** Passkey pairing replaces Just Works once display is available.
-- **Phase 3 mesh:** consolidated REPORT_NOTIFY semantics (multiple boxes → one report via master); cross-box transaction broadcast (out of scope for this contract).
-- **Possible Phase 3+ pivot to commercial / large-inventory:** if pivoting to warehouse-style multi-staff use, single-client-per-box constraint may need to become multi-client-per-mesh. The mesh layer would handle authorization; per-box auth stays single-client.
 
 ---
 
