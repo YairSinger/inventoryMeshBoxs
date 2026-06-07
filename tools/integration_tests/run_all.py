@@ -34,6 +34,8 @@ ALL_TESTS = [
     ('buzzer_error',         'ERROR 3-beep pattern drains to idle'),
     ('buzzer_ble_connected', 'BLE_CONNECTED rising chirp drains to idle'),
     ('buzzer_factory_reset', 'FACTORY_RESET continuous; stops on silence()'),
+    ('buzzer_on_insert',     'INSERT event → TAG_PLACED beep fires'),
+    ('buzzer_on_extract',    'EXTRACT event → ITEM_REMOVED beep fires'),
     ('nvs_write_read',       'NVS write + read back'),
     ('nvs_erase',            'NVS erase + verify gone'),
     ('tag_write',            'Tag write + readback  (MIFARE Classic 1K or NTAG213)'),

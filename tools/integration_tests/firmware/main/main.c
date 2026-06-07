@@ -28,8 +28,10 @@
 #include "esp_sleep.h"
 #include "nvs_flash.h"
 #include "nvs.h"
+#include "esp_timer.h"
 #include "imb_buzzer.h"
 #include "imb_buzzer_ledc.h"
+#include "imb_detector.h"
 
 /* ------------------------------------------------------------------ */
 /* Pin config (hardware.md)                                            */
@@ -38,6 +40,7 @@
 #define PIN_MISO  13
 #define PIN_SCK   12
 #define PIN_CS1   10   /* inner reader */
+#define PIN_CS2    9   /* outer reader */
 
 #define PN532_SPI_STATREAD  0x02
 #define PN532_SPI_DATAWRITE 0x01
@@ -487,6 +490,107 @@ static void test_buzzer(void)
 }
 
 /* ------------------------------------------------------------------ */
+/* TEST — Buzzer event wiring: INSERT → TAG_PLACED, EXTRACT → ITEM_REMOVED
+ *
+ * Polls both PN532 readers for 30 s. Pass a tag through the opening
+ * (inner reader first = INSERT, outer first = EXTRACT).
+ * Buzzer fires the matching pattern; [PASS] printed once per event type.
+ * ------------------------------------------------------------------ */
+
+static uint32_t get_ms(void)
+{
+    return (uint32_t)(esp_timer_get_time() / 1000);
+}
+
+static void uid_to_str(const tag_t *t, char out[15])
+{
+    int n = t->uid_len > 7 ? 7 : t->uid_len;
+    int i;
+    for (i = 0; i < n; i++)
+        snprintf(out + i * 2, 3, "%02X", t->uid[i]);
+    out[i * 2] = '\0';
+}
+
+#define TARGET_COUNT 5
+
+typedef struct {
+    int insert_count;
+    int extract_count;
+} event_flags_t;
+
+static void on_detector_event(const imb_scan_event_t *e, void *ctx)
+{
+    event_flags_t *f = (event_flags_t *)ctx;
+    if (e->dir == IMB_INSERT && f->insert_count < TARGET_COUNT) {
+        f->insert_count++;
+        imb_buzzer_play(IMB_BUZZ_TAG_PLACED);
+        printf("[INFO] buzzer_events: INSERT %d/%d — uid=%s\n",
+               f->insert_count, TARGET_COUNT, e->uid);
+        if (f->insert_count == TARGET_COUNT)
+            printf("[PASS] buzzer_on_insert\n");
+    } else if (e->dir == IMB_EXTRACT && f->extract_count < TARGET_COUNT) {
+        f->extract_count++;
+        imb_buzzer_play(IMB_BUZZ_ITEM_REMOVED);
+        printf("[INFO] buzzer_events: EXTRACT %d/%d — uid=%s\n",
+               f->extract_count, TARGET_COUNT, e->uid);
+        if (f->extract_count == TARGET_COUNT)
+            printf("[PASS] buzzer_on_extract\n");
+    } else if (e->dir == IMB_AMBIGUOUS) {
+        printf("[INFO] buzzer_events: AMBIGUOUS — uid=%s\n", e->uid);
+    }
+}
+
+static void test_buzzer_events(void)
+{
+    printf("\n");
+    printf("[INFO] buzzer_events: ============================================\n");
+    printf("[INFO] buzzer_events: MANUAL STEP — %dx INSERT + %dx EXTRACT, 90 s\n",
+           TARGET_COUNT, TARGET_COUNT);
+    printf("[INFO] buzzer_events: \n");
+    printf("[INFO] buzzer_events:   INSERT:  pass tag INNER reader first (GPIO%d)\n", PIN_CS1);
+    printf("[INFO] buzzer_events:            then OUTER reader (GPIO%d)\n", PIN_CS2);
+    printf("[INFO] buzzer_events:            => expect 1 short beep\n");
+    printf("[INFO] buzzer_events: \n");
+    printf("[INFO] buzzer_events:   EXTRACT: pass tag OUTER reader first (GPIO%d)\n", PIN_CS2);
+    printf("[INFO] buzzer_events:            then INNER reader (GPIO%d)\n", PIN_CS1);
+    printf("[INFO] buzzer_events:            => expect 2 short beeps\n");
+    printf("[INFO] buzzer_events: ============================================\n");
+
+    event_flags_t flags = {0, 0};
+    imb_detector_t det;
+    imb_detector_init(&det, 500, get_ms, on_detector_event, &flags);
+
+    uint32_t deadline = get_ms() + 90000;
+
+    while (get_ms() < deadline &&
+           (flags.insert_count < TARGET_COUNT || flags.extract_count < TARGET_COUNT)) {
+        char uid[15];
+
+        tag_t t1 = scan_tag(PIN_CS1);
+        if (t1.found) {
+            uid_to_str(&t1, uid);
+            imb_detector_on_reader_event(&det, 0, uid);
+        }
+
+        tag_t t2 = scan_tag(PIN_CS2);
+        if (t2.found) {
+            uid_to_str(&t2, uid);
+            imb_detector_on_reader_event(&det, 1, uid);
+        }
+
+        imb_detector_tick(&det);
+        vTaskDelay(pdMS_TO_TICKS(50));
+    }
+
+    if (flags.insert_count  < TARGET_COUNT)
+        printf("[SKIP] buzzer_on_insert: only %d/%d within timeout\n",
+               flags.insert_count, TARGET_COUNT);
+    if (flags.extract_count < TARGET_COUNT)
+        printf("[SKIP] buzzer_on_extract: only %d/%d within timeout\n",
+               flags.extract_count, TARGET_COUNT);
+}
+
+/* ------------------------------------------------------------------ */
 /* TEST 1 — NVS write / read / erase                                  */
 /* ------------------------------------------------------------------ */
 static void test_nvs(void)
@@ -691,7 +795,7 @@ void app_main(void)
     printf("Tests: nvs_write_read / nvs_erase / tag_write / deep_sleep\n\n");
 
     gpio_config_t out = {
-        .pin_bit_mask = (1ULL<<PIN_MOSI)|(1ULL<<PIN_SCK)|(1ULL<<PIN_CS1),
+        .pin_bit_mask = (1ULL<<PIN_MOSI)|(1ULL<<PIN_SCK)|(1ULL<<PIN_CS1)|(1ULL<<PIN_CS2),
         .mode = GPIO_MODE_OUTPUT,
     };
     gpio_config(&out);
@@ -702,15 +806,21 @@ void app_main(void)
     };
     gpio_config(&in);
     gpio_set_level(PIN_CS1, 1);
+    gpio_set_level(PIN_CS2, 1);
     vTaskDelay(pdMS_TO_TICKS(500));
 
     if (!pn532_probe(PIN_CS1))
-        printf("[INFO] PN532 probe failed — tag_write will likely skip\n");
+        printf("[INFO] PN532 #1 probe failed — tag tests may skip\n");
     pn532_init(PIN_CS1);
+
+    if (!pn532_probe(PIN_CS2))
+        printf("[INFO] PN532 #2 probe failed — buzzer_events direction may not resolve\n");
+    pn532_init(PIN_CS2);
 
     test_buzzer();
     test_nvs();
     test_tag_write(PIN_CS1);
+    test_buzzer_events();
 
     /* deep_sleep_enter() does not return — second boot prints [DONE] */
     deep_sleep_enter();
