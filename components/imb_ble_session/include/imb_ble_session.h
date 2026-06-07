@@ -33,6 +33,7 @@ typedef struct {
     int  (*notify_event)(const uint8_t *buf, size_t len, void *ctx);
     int  (*notify_report)(const uint8_t *buf, size_t len, void *ctx);
     void (*disconnect)(void *ctx);
+    void (*unbond)(void *ctx);   /* erase NimBLE bond for current peer */
     void *ctx;
 } imb_ble_session_ble_hal_t;
 
@@ -42,7 +43,8 @@ typedef struct {
     void (*on_name_tag)(void *ctx, const char *uid, uint8_t msg_id);
     void (*on_accept_tag)(void *ctx, const char *uid, uint8_t accepted, uint8_t msg_id);
     void (*on_mode_set)(void *ctx, imb_op_mode_e mode, uint8_t msg_id);
-    void (*on_set_pin)(void *ctx, uint32_t pin_hash, uint8_t msg_id);
+    /* pin_hash + box_name: app must persist to NVS and call imb_ble_update_adv() */
+    void (*on_set_pin)(void *ctx, uint32_t pin_hash, const char *box_name, uint8_t msg_id);
     void (*on_report_delivered)(void *ctx, bool success);
     void *ctx;
 } imb_ble_session_app_cbs_t;

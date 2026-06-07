@@ -161,6 +161,17 @@ static void report_send_chunk(uint16_t chunk_index)
     g_s.cfg.ble->notify_report(buf, n, g_s.cfg.ble->ctx);
 }
 
+/* ── Helpers ─────────────────────────────────────────────────────────────── */
+
+static void send_event_mode(imb_op_mode_e mode)
+{
+    imb_pkt_event_mode_t pkt = { .msg_type = IMB_MSG_EVENT_MODE, .mode = (uint8_t)mode };
+    uint8_t buf[sizeof(pkt)];
+    size_t  n = imb_proto_pack_event_mode(&pkt, buf, sizeof(buf));
+    if (g_s.cfg.ble && g_s.cfg.ble->notify_event)
+        g_s.cfg.ble->notify_event(buf, n, g_s.cfg.ble->ctx);
+}
+
 /* ── Timer callbacks ────────────────────────────────────────────────────── */
 
 static void hello_timeout_cb(void *arg)
@@ -234,6 +245,7 @@ static void handle_mode(const uint8_t *buf, size_t len)
         g_s.cfg.nvs->write_op_mode(g_s.mode, g_s.cfg.nvs->ctx);
 
     send_ack(cmd.msg_id, IMB_MSG_CMD_MODE, IMB_ACK_OK);
+    send_event_mode(g_s.mode);
 
     if (g_s.cfg.app && g_s.cfg.app->on_mode_set)
         g_s.cfg.app->on_mode_set(g_s.cfg.app->ctx, g_s.mode, cmd.msg_id);
@@ -263,8 +275,39 @@ static void handle_accept(const uint8_t *buf, size_t len)
 
 static void handle_set_pin(const uint8_t *buf, size_t len)
 {
-    (void)buf; (void)len;
-    /* Delegate to app; PIN update + mode transition handled via ack flow */
+    if (len < 2) return;
+    uint8_t msg_id = buf[1];
+
+    if (g_s.mode != IMB_MODE_SETUP) {
+        send_ack(msg_id, IMB_MSG_CMD_SET_PIN, IMB_ACK_INVALID_MODE);
+        return;
+    }
+
+    imb_pkt_cmd_set_pin_t cmd;
+    if (imb_proto_unpack_cmd_set_pin(buf, len, &cmd) != 0) return;
+
+    g_s.cfg.pin_hash = cmd.pin_hash;  /* update so future CMD_HELLO checks use new hash */
+    g_s.mode = IMB_MODE_FIELD_CHECK;
+    if (g_s.cfg.nvs && g_s.cfg.nvs->write_op_mode)
+        g_s.cfg.nvs->write_op_mode(g_s.mode, g_s.cfg.nvs->ctx);
+
+    send_ack(cmd.msg_id, IMB_MSG_CMD_SET_PIN, IMB_ACK_OK);
+    send_event_mode(IMB_MODE_FIELD_CHECK);
+
+    /* App must persist pin_hash + box_name to NVS and call imb_ble_update_adv() */
+    if (g_s.cfg.app && g_s.cfg.app->on_set_pin)
+        g_s.cfg.app->on_set_pin(g_s.cfg.app->ctx, cmd.pin_hash, cmd.box_name, cmd.msg_id);
+}
+
+static void handle_unbond(const uint8_t *buf, size_t len)
+{
+    if (len < 2) return;
+    uint8_t msg_id = buf[1];
+    send_ack(msg_id, IMB_MSG_CMD_UNBOND, IMB_ACK_OK);
+    if (g_s.cfg.ble && g_s.cfg.ble->unbond)
+        g_s.cfg.ble->unbond(g_s.cfg.ble->ctx);
+    if (g_s.cfg.ble && g_s.cfg.ble->disconnect)
+        g_s.cfg.ble->disconnect(g_s.cfg.ble->ctx);
 }
 
 static void handle_report_ack(const uint8_t *buf, size_t len)
@@ -309,8 +352,28 @@ void imb_ble_session_init(const imb_ble_session_config_t *cfg)
 void imb_ble_session_on_connected(void *ctx)
 {
     (void)ctx;
-    g_s.is_authed    = false;
-    g_s.is_subscribed = false;
+    g_s.is_authed      = false;
+    g_s.is_subscribed  = false;
+
+    /* REGISTRATION_INCOMPLETE → REGISTRATION on reconnect (§3.4 / §6.2) */
+    if (g_s.mode == IMB_MODE_REGISTRATION_INCOMPLETE) {
+        g_s.mode = IMB_MODE_REGISTRATION;
+        if (g_s.cfg.grace_timer.stop)
+            g_s.cfg.grace_timer.stop(g_s.cfg.grace_timer.ctx);
+        /* Re-queue pending UIDs so they flush to phone on subscribe */
+        for (uint8_t i = 0; i < g_s.pending_count; i++) {
+            imb_pkt_event_tag_t replay = {
+                .msg_type  = IMB_MSG_EVENT_TAG,
+                .direction = (uint8_t)IMB_INSERT,
+            };
+            memcpy(replay.uid, g_s.pending_uids[i], IMB_UID_LEN);
+            memset(replay.name, 0, IMB_NAME_LEN);
+            uint8_t buf[sizeof(replay)];
+            size_t  n = imb_proto_pack_event_tag(&replay, buf, sizeof(buf));
+            if (n > 0) queue_push(buf, (uint8_t)n);
+        }
+    }
+
     if (g_s.cfg.hello_timer.start)
         g_s.cfg.hello_timer.start(5000, hello_timeout_cb, NULL,
                                   g_s.cfg.hello_timer.ctx);
@@ -345,7 +408,8 @@ void imb_ble_session_on_cmd(void *ctx, const uint8_t *buf, size_t len)
     case IMB_MSG_CMD_SET_PIN:      handle_set_pin(buf, len);     break;
     case IMB_MSG_CMD_REPORT_ACK:   handle_report_ack(buf, len);  break;
     case IMB_MSG_CMD_REPORT_NACK:  handle_report_nack(buf, len); break;
-    default: break;
+    case IMB_MSG_CMD_UNBOND:       handle_unbond(buf, len);      break;
+    default: break;  /* CMD_GET_LOG, CMD_MESH_STATUS — not yet implemented */
     }
 }
 

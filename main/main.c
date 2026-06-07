@@ -198,11 +198,45 @@ static void ble_hal_disconnect(void *ctx)
     imb_ble_disconnect();
 }
 
+static void ble_hal_unbond(void *ctx)
+{
+    (void)ctx;
+    imb_ble_unpair_current();
+}
+
 /* ── App context ────────────────────────────────────────────────────────── */
 
 typedef struct {
     imb_session_t *session;
+    uint32_t       pin_hash;
+    char           box_name[IMB_NAME_LEN];
 } app_ctx_t;
+
+/* Called by session after CMD_SET_PIN succeeds */
+static void app_on_set_pin(void *ctx, uint32_t pin_hash, const char *box_name, uint8_t msg_id)
+{
+    (void)msg_id;
+    app_ctx_t *app = (app_ctx_t *)ctx;
+    app->pin_hash = pin_hash;
+    strncpy(app->box_name, box_name, IMB_NAME_LEN - 1);
+    app->box_name[IMB_NAME_LEN - 1] = '\0';
+    imb_ble_update_adv(pin_hash, IMB_MODE_FIELD_CHECK, 0, box_name);
+    printf("[BLE] setup complete — pin_hash=0x%08lX  name=%s\n",
+           (unsigned long)pin_hash, box_name);
+}
+
+/* Called by session after CMD_MODE succeeds */
+static void app_on_mode_set(void *ctx, imb_op_mode_e mode, uint8_t msg_id)
+{
+    (void)msg_id;
+    app_ctx_t *app = (app_ctx_t *)ctx;
+    imb_ble_update_adv(app->pin_hash, mode, 0, app->box_name);
+    imb_ble_set_conn_params(mode == IMB_MODE_REGISTRATION
+                            ? IMB_BLE_CONN_REGISTRATION
+                            : IMB_BLE_CONN_FIELD_CHECK);
+    if (mode == IMB_MODE_REGISTRATION)
+        imb_buzzer_play(IMB_BUZZ_BLE_CONNECTED);
+}
 
 static void on_scan_event(const imb_scan_event_t *e, void *ctx)
 {
@@ -232,7 +266,7 @@ static void on_scan_event(const imb_scan_event_t *e, void *ctx)
         .direction = (uint8_t)e->dir,
     };
     strncpy(pkt.uid,  e->uid,  IMB_UID_LEN  - 1);
-    strncpy(pkt.name, "",      IMB_NAME_LEN - 1);
+    pkt.name[0] = '\0';
     imb_ble_session_push_event_tag(&pkt);
 }
 
@@ -296,8 +330,13 @@ void app_main(void)
         .notify_event  = ble_hal_notify_event,
         .notify_report = ble_hal_notify_report,
         .disconnect    = ble_hal_disconnect,
+        .unbond        = ble_hal_unbond,
     };
-    static const imb_ble_session_app_cbs_t app_cbs = { 0 }; /* stubs — phone cmds not handled yet */
+    static const imb_ble_session_app_cbs_t app_cbs = {
+        .on_set_pin  = app_on_set_pin,
+        .on_mode_set = app_on_mode_set,
+        .ctx         = &app_ctx,
+    };
 
     imb_ble_session_config_t sess_cfg = {
         .pin_hash = 0,  /* SETUP mode — no PIN yet */

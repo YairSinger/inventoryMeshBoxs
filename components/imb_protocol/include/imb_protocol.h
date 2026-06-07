@@ -140,6 +140,14 @@ typedef struct __attribute__((packed)) {
     uint8_t accepted;  /* 1 = accepted, 0 = rejected */
 } imb_pkt_cmd_accept_t;
 
+/* CMD_SET_PIN — first-time provisioning (SETUP mode only) */
+typedef struct __attribute__((packed)) {
+    uint8_t  msg_type;               /* IMB_MSG_CMD_SET_PIN */
+    uint8_t  msg_id;
+    uint32_t pin_hash;               /* CRC32 of user PIN */
+    char     box_name[IMB_NAME_LEN]; /* human-readable box name */
+} imb_pkt_cmd_set_pin_t;
+
 /* Advertisement Manufacturer Data (8 bytes) */
 typedef struct __attribute__((packed)) {
     uint16_t company_id;  /* 0xFFFF */
@@ -167,6 +175,7 @@ size_t imb_proto_pack_cmd_hello    (const imb_pkt_cmd_hello_t    *msg, uint8_t *
 size_t imb_proto_pack_cmd_mode     (const imb_pkt_cmd_mode_t     *msg, uint8_t *buf, size_t max);
 size_t imb_proto_pack_cmd_name     (const imb_pkt_cmd_name_t     *msg, uint8_t *buf, size_t max);
 size_t imb_proto_pack_cmd_accept   (const imb_pkt_cmd_accept_t   *msg, uint8_t *buf, size_t max);
+size_t imb_proto_pack_cmd_set_pin  (const imb_pkt_cmd_set_pin_t  *msg, uint8_t *buf, size_t max);
 
 /* Pack report chunk header + entries[] into buf. */
 size_t imb_proto_pack_report_chunk (const imb_pkt_report_chunk_t *hdr,
@@ -180,6 +189,7 @@ int imb_proto_unpack_event_tag    (const uint8_t *buf, size_t len, imb_pkt_event
 int imb_proto_unpack_event_mode   (const uint8_t *buf, size_t len, imb_pkt_event_mode_t   *out);
 int imb_proto_unpack_event_ack    (const uint8_t *buf, size_t len, imb_pkt_event_ack_t    *out);
 int imb_proto_unpack_cmd_hello    (const uint8_t *buf, size_t len, imb_pkt_cmd_hello_t    *out);
+int imb_proto_unpack_cmd_set_pin  (const uint8_t *buf, size_t len, imb_pkt_cmd_set_pin_t  *out);
 int imb_proto_unpack_report_chunk (const uint8_t *buf, size_t len,
                                    imb_pkt_report_chunk_t *hdr_out,
                                    imb_pkt_report_entry_t *entries_out);

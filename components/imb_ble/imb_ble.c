@@ -32,6 +32,10 @@ static struct {
 /* Last 4 hex chars of MAC, set on sync */
 static char g_mac4[5];  /* "AABB\0" */
 
+/* Subscribe tracking — fire on_subscribed only after both CCCDs enabled */
+static bool g_event_sub;
+static bool g_report_sub;
+
 /* ── Prototypes ─────────────────────────────────────────────────────────── */
 
 static int  gap_event_cb(struct ble_gap_event *event, void *arg);
@@ -143,6 +147,8 @@ static void start_advertising(void)
     memset(&params, 0, sizeof(params));
     params.conn_mode = BLE_GAP_CONN_MODE_UND;
     params.disc_mode = BLE_GAP_DISC_MODE_GEN;
+    params.itvl_min  = 160;  /* 100 ms / 0.625 ms per unit */
+    params.itvl_max  = 200;  /* 125 ms */
 
     rc = ble_gap_adv_start(BLE_OWN_ADDR_PUBLIC, NULL, BLE_HS_FOREVER,
                            &params, gap_event_cb, NULL);
@@ -168,7 +174,9 @@ static int gap_event_cb(struct ble_gap_event *event, void *arg)
             ble_gap_terminate(event->connect.conn_handle, BLE_ERR_CONN_REJ_RESOURCES);
             return 0;
         }
-        g_conn_handle = event->connect.conn_handle;
+        g_conn_handle  = event->connect.conn_handle;
+        g_event_sub    = false;
+        g_report_sub   = false;
         ESP_LOGI(TAG, "connected handle=%d", g_conn_handle);
         if (g_cbs.on_connected) g_cbs.on_connected(g_ctx);
         return 0;
@@ -176,15 +184,19 @@ static int gap_event_cb(struct ble_gap_event *event, void *arg)
     case BLE_GAP_EVENT_DISCONNECT:
         ESP_LOGI(TAG, "disconnected reason=%d", event->disconnect.reason);
         g_conn_handle = BLE_HS_CONN_HANDLE_NONE;
+        g_event_sub   = false;
+        g_report_sub  = false;
         if (g_cbs.on_disconnected) g_cbs.on_disconnected(g_ctx);
         start_advertising();
         return 0;
 
     case BLE_GAP_EVENT_SUBSCRIBE:
-        /* Detect EVENT_NOTIFY CCCD enable → flush queued events */
-        if (event->subscribe.attr_handle == g_char_event_val_handle &&
-            event->subscribe.cur_notify  == 1) {
-            ESP_LOGI(TAG, "EVENT_NOTIFY subscribed");
+        if (event->subscribe.attr_handle == g_char_event_val_handle)
+            g_event_sub  = (event->subscribe.cur_notify == 1);
+        else if (event->subscribe.attr_handle == g_char_report_val_handle)
+            g_report_sub = (event->subscribe.cur_notify == 1);
+        if (g_event_sub && g_report_sub) {
+            ESP_LOGI(TAG, "both CCCDs subscribed");
             if (g_cbs.on_subscribed) g_cbs.on_subscribed(g_ctx);
         }
         return 0;
@@ -309,4 +321,12 @@ void imb_ble_disconnect(void)
     if (g_conn_handle != BLE_HS_CONN_HANDLE_NONE) {
         ble_gap_terminate(g_conn_handle, BLE_ERR_REM_USER_CONN_TERM);
     }
+}
+
+void imb_ble_unpair_current(void)
+{
+    if (g_conn_handle == BLE_HS_CONN_HANDLE_NONE) return;
+    struct ble_gap_conn_desc desc;
+    if (ble_gap_conn_find(g_conn_handle, &desc) == 0)
+        ble_gap_unpair(&desc.peer_id_addr);
 }
