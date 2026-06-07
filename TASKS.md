@@ -1,7 +1,7 @@
 # Project Tasks
 
-> **Current branch:** `feat/phase2-master-box`
-> **Context snapshot:** Phase 1 logic layer complete (25/25 tests). Phase 1 drivers + integration remain before Phase 2 begins.
+> **Current branch:** `feat/buzzer-integration`
+> **Context snapshot:** Phase 1 logic + drivers complete. BLE stack wired in main.c (imb_ble + imb_ble_session). Buzzer component done. LED component not yet built as imb_led. Phase 2 blocked on LED + BLE sanity test.
 
 ---
 
@@ -78,7 +78,11 @@ All components under `components/imb_*/`. Run tests: `cd components/<name>/test 
 - [x] NVS driver: write + read + erase `imb_local` namespace — **DONE**
 - [x] Deep sleep + timer wakeup — **DONE**
 - [ ] Deep sleep + BOOT button wake: GPIO 0 wakes from deep sleep
-- [ ] BLE GATT server: phone connects, subscribes to notify chars, writes COMMAND_WRITE
+- [x] BLE GATT server: phone connects, subscribes to notify chars, writes COMMAND_WRITE — **DONE** (imb_ble + imb_ble_session wired in main.c)
+- [x] Passive buzzer (GPIO 17, LEDC PWM): `imb_buzzer` component, 6 named patterns, wired to NFC events — **DONE**
+- [ ] **`imb_led` component** (WS2812B GPIO 48): extract into HAL-pattern component and wire into main.c
+  - Contract in `docs/protocols.md`: 10 patterns (insert=green pulse, extract=red pulse, ambiguous=yellow flash, reg-pass=solid green 2s, reg-fail=red double-flash, BLE-idle=white dim 3s, mesh-disc=blue breathing, factory-reset-hold=slow red breathing, factory-reset=fast red flash, sleep=off)
+  - WS2812B RMT driver confirmed working in earlier session directly in main.c — needs extracting into `components/imb_led/` following same HAL pattern as `imb_buzzer`
 
 ## Phase 1 — BLE Server (architecture decided 2026-05-31)
 
@@ -122,52 +126,22 @@ Callbacks: `on_subscribed(ctx)` [EVENT_NOTIFY CCCD enabled], `on_cmd(ctx, buf, l
 - Advertisement name: `IMB-<name>-<last4MAC>` in normal mode; `IMB-SETUP-<last4MAC>` in SETUP mode
 - Connection params: FIELD_CHECK (15–30 ms, lat=0, sup=2 s) / REGISTRATION (100–200 ms, lat=4, sup=6 s)
 
-### Step 1 — Port `imb_protocol` ✦ START HERE
-- [ ] Copy updated structs from `inventoryMeshBoxs-gemini/components/imb_protocol/include/imb_protocol.h` into `components/imb_protocol/include/imb_protocol.h`: all `[NEW]` message types, `msg_id` in all CMD structs, `imb_ack_status_e`, `imb_pkt_adv_t`, UUID defines, updated pack/unpack signatures
-- [ ] Update `imb_protocol.c` pack/unpack implementations to match (port from gemini)
-- [ ] Update host tests: add round-trip tests for CMD_HELLO, EVENT_ACK, REPORT_CHUNK, CMD_MODE/NAME/ACCEPT with msg_id, all ACK status codes
+### Steps 1–5 — **DONE** (2026-06-07)
+- [x] `imb_protocol`: all message types, pack/unpack, `imb_pkt_cmd_set_pin_t`, locked UUIDs
+- [x] `imb_ble`: NimBLE transport, GATT table, advertise (100–125 ms interval), Just Works + LE SC bonding, both-CCCD subscribe gate, `imb_ble_unpair_current()`
+- [x] `imb_ble_session`: auth gate, 8-event queue, EVENT_DROPPED, mode state machine, CMD_SET_PIN (full), EVENT_MODE on transitions, CMD_UNBOND, REGISTRATION_INCOMPLETE resume, grace window
+- [x] NVS schema: `imb_state` namespace (op_mode, pending_uids) — HAL-injected, not yet wired to real NVS in main.c
+- [x] Integration: `main.c` wires PN532 → imb_detector → imb_session + imb_buzzer + imb_ble_session; app callbacks on_set_pin + on_mode_set implemented
 
-### Step 2 — `imb_ble` driver component
-- [ ] Create `components/imb_ble/` with CMakeLists, `imb_ble.h`, `imb_ble.c`
-- [ ] NimBLE init: `nimble_port_init`, `ble_hs_cfg.sync_cb`, host task (port from gemini)
-- [ ] GATT table: 1 service, 3 characteristics — EVENT_NOTIFY (notify), REPORT_NOTIFY (notify), COMMAND_WRITE (write) — UUID byte arrays from gemini
-- [ ] `BLE_GAP_EVENT_SUBSCRIBE` handler: detect EVENT_NOTIFY CCCD enable → call `on_subscribed` callback
-- [ ] `BLE_GAP_EVENT_CONNECT`: single-client enforcement (`ble_gap_terminate` if second connection); start 5 s HELLO timeout
-- [ ] `BLE_GAP_EVENT_DISCONNECT`: call `on_disconnected`, restart advertising
-- [ ] `BLE_GAP_EVENT_MTU`: log only
-- [ ] Advertisement: `IMB-<name>-<last4MAC>` + 8-byte mfg-data struct; `IMB-SETUP-<last4MAC>` when pin_hash=0
-- [ ] `imb_ble_update_adv()`: stop + restart advertisement with new mfg-data
-- [ ] Connection parameter re-request on `imb_ble_set_conn_params(profile)` call
-- [ ] Just Works pairing + LE Secure Connections: set `ble_hs_cfg.sm_sc=1`, `sm_bonding=1`, `sm_our_key_dist`, `sm_their_key_dist`
-- [ ] **Hardware smoke-test milestone**: nRF Connect sees `IMB-*`, connects, sees 3 characteristics, can subscribe + write
-
-### Step 3 — `imb_ble_session` logic component (TDD)
-- [ ] Create `components/imb_ble_session/` with CMakeLists, header, source, test/
-- [ ] Define `imb_ble_session_nvs_hal_t` (read/write op_mode, read/write pending_uids)
-- [ ] Define `imb_ble_session_app_cbs_t` (on_name_tag, on_accept_tag, on_mode_set, on_set_pin, on_report_delivered)
-- [ ] Auth gate: `on_cmd` dispatches CMD_HELLO first; all others return NOT_AUTHED until authed
-- [ ] 8-event ring buffer (depth=8): `imb_ble_session_push_event_tag()` enqueues; `on_subscribed` flushes via `imb_ble_notify_event()`
-- [ ] EVENT_DROPPED: if queue full, drop oldest + increment drop counter; send `EVENT_DROPPED` on flush
-- [ ] Mode state machine: validate transitions per contract §6.2; persist on change via NVS HAL
-- [ ] Grace window: `ble_npl_callout` started on `on_disconnected` during REGISTRATION; cancelled on reconnect; on expiry → FIELD_CHECK or REGISTRATION_INCOMPLETE depending on pending_uids
-- [ ] REGISTRATION_INCOMPLETE: persist to NVS; replay pending EVENT_TAGs on reconnect
-- [ ] Report delivery: `imb_ble_session_deliver_report(entries, count)` → chunks → REPORT_NOTIFY; track ACK/NACK; retry on NACK; call `on_report_delivered` when complete or 30 s window expires
-- [ ] Host tests: auth gate, queue flush, drop counter, mode transitions, grace window expiry (both branches), REGISTRATION_INCOMPLETE persistence, report chunking + NACK retry
-
-### Step 4 — NVS schema additions (`imb_state` namespace)
-- [ ] `op_mode` uint8
-- [ ] `pending_count` uint8
-- [ ] `pending_uids` packed array (up to 64 × IMB_UID_LEN bytes)
-- [ ] `pending_epoch` uint32 (grace window start time)
-
-### Step 5 — Integration (`main.c` wiring)
-- [ ] Wire `imb_ble` callbacks → `imb_ble_session`
-- [ ] Wire `imb_ble_session` app-callbacks → PN532 driver (CMD_NAME → NDEF write), `imb_registry` (CMD_ACCEPT), NVS (CMD_SET_PIN, CMD_MODE)
-- [ ] Wire `imb_detector` → `imb_session` in lid-open loop
-- [ ] Wire `imb_session` + `imb_registry` → `imb_delta` on lid close → `imb_ble_session_deliver_report()`
-- [ ] REGISTRATION_INCOMPLETE lid-open-rescan recovery: check pending UIDs against scan result, auto-transition if all absent
-- [ ] Factory reset: 10 s BOOT button hold → erase all `imb_*` NVS namespaces + NimBLE bond store → reboot
-- [ ] Mode persisted in `imb_state.op_mode`, loaded on boot
+### Remaining BLE / integration tasks
+- [ ] **BLE sanity test**: phone app connects, CMD_HELLO succeeds, stays connected (connection currently dropping — under investigation)
+- [ ] Wire real NVS HAL into `imb_ble_session_init` (currently NULL — mode not persisted across reboots)
+- [ ] Wire `on_name_tag` → PN532 NDEF write → `imb_ble_session_ack()`
+- [ ] Wire `on_accept_tag` → `imb_registry` accept/reject
+- [ ] Wire lid-close: `imb_delta` → `imb_ble_session_deliver_report()`
+- [ ] REGISTRATION_INCOMPLETE lid-open-rescan recovery
+- [ ] Factory reset: 10 s BOOT button hold → erase NVS namespaces + NimBLE bond store → reboot
+- [ ] App-side changes documented in `docs/app-ble-changes.md`
 
 ---
 
