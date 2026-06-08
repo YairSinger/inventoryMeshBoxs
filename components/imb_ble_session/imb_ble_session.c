@@ -39,9 +39,10 @@ typedef struct {
     char    pending_uids[PENDING_UIDS_MAX][IMB_UID_LEN];
     uint8_t pending_count;
 
-    /* In-flight name op: msg_id → uid */
+    /* In-flight name op: msg_id → uid + name */
     uint8_t inflight_msg_id;
     char    inflight_uid[IMB_UID_LEN];
+    char    inflight_name[IMB_NAME_LEN];
     bool    inflight_active;
 
     /* Report delivery state */
@@ -275,9 +276,11 @@ static void handle_name(const uint8_t *buf, size_t len)
     g_s.inflight_active  = true;
     g_s.inflight_msg_id  = cmd.msg_id;
     memcpy(g_s.inflight_uid, cmd.uid, IMB_UID_LEN);
+    strncpy(g_s.inflight_name, cmd.name, IMB_NAME_LEN - 1);
+    g_s.inflight_name[IMB_NAME_LEN - 1] = '\0';
 
     if (g_s.cfg.app && g_s.cfg.app->on_name_tag)
-        g_s.cfg.app->on_name_tag(g_s.cfg.app->ctx, cmd.uid, cmd.msg_id);
+        g_s.cfg.app->on_name_tag(g_s.cfg.app->ctx, cmd.uid, cmd.name, cmd.msg_id);
 }
 
 static void handle_accept(const uint8_t *buf, size_t len)

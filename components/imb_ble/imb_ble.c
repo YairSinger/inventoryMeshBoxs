@@ -380,3 +380,8 @@ void imb_ble_unpair_current(void)
     if (ble_gap_conn_find(g_conn_handle, &desc) == 0)
         ble_gap_unpair(&desc.peer_id_addr);
 }
+
+void imb_ble_clear_all_bonds(void)
+{
+    ble_store_clear();
+}

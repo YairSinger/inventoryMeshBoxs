@@ -2,6 +2,7 @@ UNITY = vendor/unity
 CC    = cc
 CFLAGS = -std=c99 -Wall -Wextra \
          -I$(UNITY) \
+         -Istubs \
          -I../include \
          -I../../imb_types/include \
          -I../../imb_protocol/include \
