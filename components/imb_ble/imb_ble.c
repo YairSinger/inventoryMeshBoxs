@@ -160,6 +160,7 @@ static void start_advertising(void)
 static int gap_event_cb(struct ble_gap_event *event, void *arg)
 {
     (void)arg;
+    struct ble_gap_conn_desc desc;
     switch (event->type) {
 
     case BLE_GAP_EVENT_CONNECT:
@@ -177,12 +178,23 @@ static int gap_event_cb(struct ble_gap_event *event, void *arg)
         g_conn_handle  = event->connect.conn_handle;
         g_event_sub    = false;
         g_report_sub   = false;
-        ESP_LOGI(TAG, "connected handle=%d", g_conn_handle);
+        if (ble_gap_conn_find(event->connect.conn_handle, &desc) == 0) {
+            ESP_LOGI(TAG, "connected handle=%d peer=%02X:%02X:%02X:%02X:%02X:%02X type=%d bonded=%d",
+                     g_conn_handle,
+                     desc.peer_id_addr.val[5], desc.peer_id_addr.val[4],
+                     desc.peer_id_addr.val[3], desc.peer_id_addr.val[2],
+                     desc.peer_id_addr.val[1], desc.peer_id_addr.val[0],
+                     desc.peer_id_addr.type,
+                     desc.sec_state.bonded);
+        } else {
+            ESP_LOGI(TAG, "connected handle=%d", g_conn_handle);
+        }
         if (g_cbs.on_connected) g_cbs.on_connected(g_ctx);
         return 0;
 
     case BLE_GAP_EVENT_DISCONNECT:
-        ESP_LOGI(TAG, "disconnected reason=%d", event->disconnect.reason);
+        ESP_LOGI(TAG, "disconnected reason=%d (0x%02X)", event->disconnect.reason,
+                 event->disconnect.reason);
         g_conn_handle = BLE_HS_CONN_HANDLE_NONE;
         g_event_sub   = false;
         g_report_sub  = false;
@@ -195,6 +207,9 @@ static int gap_event_cb(struct ble_gap_event *event, void *arg)
             g_event_sub  = (event->subscribe.cur_notify == 1);
         else if (event->subscribe.attr_handle == g_char_report_val_handle)
             g_report_sub = (event->subscribe.cur_notify == 1);
+        ESP_LOGI(TAG, "subscribe attr=%d notify=%d event_sub=%d report_sub=%d",
+                 event->subscribe.attr_handle, event->subscribe.cur_notify,
+                 g_event_sub, g_report_sub);
         if (g_event_sub && g_report_sub) {
             ESP_LOGI(TAG, "both CCCDs subscribed");
             if (g_cbs.on_subscribed) g_cbs.on_subscribed(g_ctx);
@@ -203,6 +218,41 @@ static int gap_event_cb(struct ble_gap_event *event, void *arg)
 
     case BLE_GAP_EVENT_MTU:
         ESP_LOGI(TAG, "MTU negotiated=%d", event->mtu.value);
+        return 0;
+
+    case BLE_GAP_EVENT_ENC_CHANGE:
+        ESP_LOGI(TAG, "enc_change handle=%d status=%d encrypted=%d authenticated=%d bonded=%d",
+                 event->enc_change.conn_handle,
+                 event->enc_change.status,
+                 (ble_gap_conn_find(event->enc_change.conn_handle, &desc) == 0) ? desc.sec_state.encrypted : -1,
+                 (ble_gap_conn_find(event->enc_change.conn_handle, &desc) == 0) ? desc.sec_state.authenticated : -1,
+                 (ble_gap_conn_find(event->enc_change.conn_handle, &desc) == 0) ? desc.sec_state.bonded : -1);
+        if (event->enc_change.status != 0)
+            ESP_LOGE(TAG, "ENC FAILED — pairing/bonding error status=0x%02X", event->enc_change.status);
+        return 0;
+
+    case BLE_GAP_EVENT_PASSKEY_ACTION:
+        /* Just Works — should not normally fire, log it if it does */
+        ESP_LOGW(TAG, "passkey_action action=%d (unexpected for Just Works)",
+                 event->passkey.params.action);
+        return 0;
+
+    case BLE_GAP_EVENT_REPEAT_PAIRING:
+        /* Phone is trying to pair but a bond already exists for this peer.
+         * Delete the stale bond and allow the new pairing to proceed. */
+        ESP_LOGW(TAG, "repeat_pairing — stale bond found, deleting and retrying");
+        ble_gap_conn_find(event->repeat_pairing.conn_handle, &desc);
+        ble_store_util_delete_peer(&desc.peer_id_addr);
+        return BLE_GAP_REPEAT_PAIRING_RETRY;
+
+    case BLE_GAP_EVENT_IDENTITY_RESOLVED:
+        if (ble_gap_conn_find(event->identity_resolved.conn_handle, &desc) == 0) {
+            ESP_LOGI(TAG, "identity resolved peer=%02X:%02X:%02X:%02X:%02X:%02X bonded=%d",
+                     desc.peer_id_addr.val[5], desc.peer_id_addr.val[4],
+                     desc.peer_id_addr.val[3], desc.peer_id_addr.val[2],
+                     desc.peer_id_addr.val[1], desc.peer_id_addr.val[0],
+                     desc.sec_state.bonded);
+        }
         return 0;
 
     default:

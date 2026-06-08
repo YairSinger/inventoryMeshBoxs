@@ -1,5 +1,8 @@
 #include "imb_ble_session.h"
+#include "esp_log.h"
 #include <string.h>
+
+static const char *TAG = "IMB_SESS";
 
 /* ── Internal constants ─────────────────────────────────────────────────── */
 
@@ -178,6 +181,7 @@ static void hello_timeout_cb(void *arg)
 {
     (void)arg;
     if (!g_s.is_authed) {
+        ESP_LOGW(TAG, "HELLO timeout — client never sent CMD_HELLO, disconnecting");
         if (g_s.cfg.ble && g_s.cfg.ble->disconnect)
             g_s.cfg.ble->disconnect(g_s.cfg.ble->ctx);
     }
@@ -206,15 +210,27 @@ static void grace_timeout_cb(void *arg)
 static void handle_hello(const uint8_t *buf, size_t len)
 {
     imb_pkt_cmd_hello_t hello;
-    if (imb_proto_unpack_cmd_hello(buf, len, &hello) != 0) return;
+    if (imb_proto_unpack_cmd_hello(buf, len, &hello) != 0) {
+        ESP_LOGE(TAG, "CMD_HELLO unpack failed (len=%u)", (unsigned)len);
+        return;
+    }
 
     if (g_s.cfg.hello_timer.stop)
         g_s.cfg.hello_timer.stop(g_s.cfg.hello_timer.ctx);
 
+    ESP_LOGI(TAG, "CMD_HELLO recv pin_hash=0x%08lX expected=0x%08lX mode=%d",
+             (unsigned long)hello.pin_hash,
+             (unsigned long)g_s.cfg.pin_hash,
+             (int)g_s.mode);
+
     if (hello.pin_hash == g_s.cfg.pin_hash) {
         g_s.is_authed = true;
+        ESP_LOGI(TAG, "CMD_HELLO OK — client authed");
         send_ack(hello.msg_id, IMB_MSG_CMD_HELLO, IMB_ACK_OK);
     } else {
+        ESP_LOGE(TAG, "CMD_HELLO PIN_MISMATCH — recv=0x%08lX expected=0x%08lX",
+                 (unsigned long)hello.pin_hash,
+                 (unsigned long)g_s.cfg.pin_hash);
         send_ack(hello.msg_id, IMB_MSG_CMD_HELLO, IMB_ACK_PIN_MISMATCH);
         if (g_s.cfg.ble && g_s.cfg.ble->disconnect)
             g_s.cfg.ble->disconnect(g_s.cfg.ble->ctx);
@@ -394,6 +410,8 @@ void imb_ble_session_on_connected(void *ctx)
         }
     }
 
+    ESP_LOGI(TAG, "on_connected: mode=%d pin_hash=0x%08lX — starting 5s HELLO timer",
+             (int)g_s.mode, (unsigned long)g_s.cfg.pin_hash);
     if (g_s.cfg.hello_timer.start)
         g_s.cfg.hello_timer.start(5000, hello_timeout_cb, NULL,
                                   g_s.cfg.hello_timer.ctx);
@@ -416,6 +434,8 @@ void imb_ble_session_on_cmd(void *ctx, const uint8_t *buf, size_t len)
 
     /* Auth gate */
     if (!g_s.is_authed && msg_type != IMB_MSG_CMD_HELLO) {
+        ESP_LOGW(TAG, "NOT_AUTHED: cmd=0x%02X blocked (CMD_HELLO not yet received)",
+                 msg_type);
         send_ack(msg_id, msg_type, IMB_ACK_NOT_AUTHED);
         return;
     }

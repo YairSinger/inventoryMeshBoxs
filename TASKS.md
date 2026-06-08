@@ -1,7 +1,7 @@
 # Project Tasks
 
-> **Current branch:** `main` (feat/buzzer-integration merged 2026-06-08)
-> **Context snapshot:** Phase 1 complete — all logic, BLE stack, buzzer, and LED wired in main.c. Firmware builds clean. BLE contract-compliance fixes applied and documented. Next: BLE sanity test (connection staying up), NVS HAL wiring, then Phase 2 (OLED + buttons).
+> **Current branch:** `feat/item-registration` (branched from main 2026-06-08)
+> **Context snapshot:** Provisioning flow fully wired and NVS-persistent (pin_hash, box_name, op_mode survive reboot). BLE auth debug logging added. Next: item registration — NDEF write, registry wiring, on_name_tag callback.
 
 ---
 
@@ -133,13 +133,31 @@ Callbacks: `on_subscribed(ctx)` [EVENT_NOTIFY CCCD enabled], `on_cmd(ctx, buf, l
 - [x] App-side changes documented in `docs/app-ble-changes.md` (9 sections, source of truth: `docs/ble-contract.md`)
 
 ### Remaining BLE / integration tasks
-- [ ] **BLE sanity test**: phone app connects, CMD_HELLO succeeds, stays connected (connection dropping — run serial monitor to see disconnect reason code)
-- [ ] Wire real NVS HAL into `imb_ble_session_init` (currently NULL — mode + pending UIDs not persisted across reboots)
-- [ ] Wire `on_name_tag` → PN532 NDEF write → `imb_ble_session_ack()`
-- [ ] Wire `on_accept_tag` → `imb_registry` accept/reject
+
+#### ✅ Done (2026-06-08, this session)
+- [x] Wire real NVS HAL into `imb_ble_session_init` — `imb_state` op_mode + pending_uids now persisted
+- [x] Load `pin_hash` + `box_name` from `imb_identity` NVS on boot — provisioning survives reboot
+- [x] Persist `pin_hash` + `box_name` in `app_on_set_pin` and `app_on_box_rename`
+- [x] Initial advertisement reflects persisted state (SETUP vs FIELD_CHECK, correct pin_hash + name)
+- [x] BLE debug logging: enc_change, repeat_pairing handler, pin_hash compare, NOT_AUTHED gate, HELLO timeout
+
+#### Item Registration — `feat/item-registration` (current)
+
+**Flow:** NFC scan detects tag → box sends `EVENT_TAG { uid, name="" }` → phone prompts user → phone sends `CMD_NAME { uid, name }` → box writes NDEF + registers → `EVENT_ACK[OK]`
+
+- [ ] **Instantiate `imb_registry`** in `main.c` with NVS HAL wired to `imb_local` namespace
+- [ ] **Implement `on_name_tag`** callback: given `uid`, locate tag on reader 0 or 1, write NDEF text record via PN532, call `imb_ble_session_ack(msg_id, OK or NDEF_WRITE_FAILED)`
+- [ ] **PN532 NDEF write path**: `InListPassiveTarget` to find tag → `TgNDEFWrite` (or block-write for MIFARE Classic) — reference: existing NDEF integration test in Phase 1 drivers
+- [ ] **Registry lookup in `on_scan_event`**: query `imb_registry_get(uid)` and populate `pkt.name` so phone sees `name != ""` for already-registered tags (no re-prompt)
+- [ ] **`imb_registry_add`** after successful NDEF write: persist `{ uid, name }` to `imb_local` NVS
+- [ ] **`imb_ble_session_ack`** called on NDEF write result so pending_count decrements and phone gets `EVENT_ACK`
+- [ ] **`CMD_MODE → FIELD_CHECK`** unblocked once all pending UIDs named (flows through existing session logic)
+
+#### Remaining after item registration
+- [ ] Wire `on_accept_tag` → `imb_registry` accept/reject (FIELD_CHECK foreign tag flow)
 - [ ] Wire lid-close: `imb_delta` → `imb_ble_session_deliver_report()`
 - [ ] REGISTRATION_INCOMPLETE lid-open-rescan recovery
-- [ ] Factory reset: 10 s BOOT button hold → erase NVS namespaces + NimBLE bond store → reboot
+- [ ] Factory reset: 10 s BOOT button hold → erase all four NVS namespaces + NimBLE bond store → reboot
 - [ ] Deep sleep + BOOT button wake: GPIO 0 wakes from deep sleep
 
 ---

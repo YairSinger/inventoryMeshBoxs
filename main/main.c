@@ -18,6 +18,7 @@
 #include "rom/ets_sys.h"
 #include "esp_timer.h"
 #include "nvs_flash.h"
+#include "nvs.h"
 #include "imb_buzzer.h"
 #include "imb_buzzer_ledc.h"
 #include "imb_led.h"
@@ -34,6 +35,113 @@
 #define PIN_SCK   12
 #define PIN_CS0   10   /* inner reader (reader 0) */
 #define PIN_CS1    9   /* outer reader (reader 1) */
+
+/* ── NVS helpers ────────────────────────────────────────────────────────── */
+
+#define NVS_NS_IDENTITY   "imb_identity"
+#define NVS_NS_STATE      "imb_state"
+#define NVS_KEY_PIN_HASH  "pin_hash"
+#define NVS_KEY_BOX_NAME  "box_name"
+#define NVS_KEY_OP_MODE   "op_mode"
+#define NVS_KEY_PEND_UIDS "pending_uids"
+
+static uint32_t nvs_load_pin_hash(void)
+{
+    nvs_handle_t h;
+    if (nvs_open(NVS_NS_IDENTITY, NVS_READONLY, &h) != ESP_OK) return 0;
+    uint32_t val = 0;
+    nvs_get_u32(h, NVS_KEY_PIN_HASH, &val);
+    nvs_close(h);
+    return val;
+}
+
+static void nvs_load_box_name(char *name, size_t maxlen)
+{
+    nvs_handle_t h;
+    if (nvs_open(NVS_NS_IDENTITY, NVS_READONLY, &h) != ESP_OK) return;
+    nvs_get_str(h, NVS_KEY_BOX_NAME, name, &maxlen);
+    nvs_close(h);
+}
+
+static void nvs_save_identity(uint32_t pin_hash, const char *box_name)
+{
+    nvs_handle_t h;
+    if (nvs_open(NVS_NS_IDENTITY, NVS_READWRITE, &h) != ESP_OK) return;
+    nvs_set_u32(h, NVS_KEY_PIN_HASH, pin_hash);
+    nvs_set_str(h, NVS_KEY_BOX_NAME, box_name);
+    nvs_commit(h);
+    nvs_close(h);
+    printf("[NVS] identity saved — pin_hash=0x%08lX  name=%s\n",
+           (unsigned long)pin_hash, box_name);
+}
+
+static void nvs_save_box_name(uint32_t pin_hash, const char *box_name)
+{
+    nvs_handle_t h;
+    if (nvs_open(NVS_NS_IDENTITY, NVS_READWRITE, &h) != ESP_OK) return;
+    nvs_set_str(h, NVS_KEY_BOX_NAME, box_name);
+    nvs_commit(h);
+    nvs_close(h);
+    printf("[NVS] box_name saved → %s\n", box_name);
+    (void)pin_hash;
+}
+
+/* ── NVS HAL (wired to imb_ble_session) ─────────────────────────────────── */
+
+static int hal_nvs_read_op_mode(imb_op_mode_e *out, void *ctx)
+{
+    (void)ctx;
+    nvs_handle_t h;
+    if (nvs_open(NVS_NS_STATE, NVS_READONLY, &h) != ESP_OK) return -1;
+    uint8_t val;
+    esp_err_t err = nvs_get_u8(h, NVS_KEY_OP_MODE, &val);
+    nvs_close(h);
+    if (err != ESP_OK) return -1;
+    *out = (imb_op_mode_e)val;
+    return 0;
+}
+
+static int hal_nvs_write_op_mode(imb_op_mode_e mode, void *ctx)
+{
+    (void)ctx;
+    nvs_handle_t h;
+    if (nvs_open(NVS_NS_STATE, NVS_READWRITE, &h) != ESP_OK) return -1;
+    esp_err_t err = nvs_set_u8(h, NVS_KEY_OP_MODE, (uint8_t)mode);
+    if (err == ESP_OK) nvs_commit(h);
+    nvs_close(h);
+    return err == ESP_OK ? 0 : -1;
+}
+
+static int hal_nvs_read_pending_uids(char uids[][IMB_UID_LEN], uint8_t *count_out, void *ctx)
+{
+    (void)ctx;
+    nvs_handle_t h;
+    if (nvs_open(NVS_NS_STATE, NVS_READONLY, &h) != ESP_OK) { *count_out = 0; return -1; }
+    size_t len = IMB_REGISTRY_MAX_ITEMS * IMB_UID_LEN;
+    esp_err_t err = nvs_get_blob(h, NVS_KEY_PEND_UIDS, uids, &len);
+    nvs_close(h);
+    if (err != ESP_OK) { *count_out = 0; return -1; }
+    *count_out = (uint8_t)(len / IMB_UID_LEN);
+    return 0;
+}
+
+static int hal_nvs_write_pending_uids(const char uids[][IMB_UID_LEN], uint8_t count, void *ctx)
+{
+    (void)ctx;
+    nvs_handle_t h;
+    if (nvs_open(NVS_NS_STATE, NVS_READWRITE, &h) != ESP_OK) return -1;
+    esp_err_t err = nvs_set_blob(h, NVS_KEY_PEND_UIDS, uids, count * IMB_UID_LEN);
+    if (err == ESP_OK) nvs_commit(h);
+    nvs_close(h);
+    return err == ESP_OK ? 0 : -1;
+}
+
+static const imb_ble_session_nvs_hal_t g_nvs_hal = {
+    .read_op_mode       = hal_nvs_read_op_mode,
+    .write_op_mode      = hal_nvs_write_op_mode,
+    .read_pending_uids  = hal_nvs_read_pending_uids,
+    .write_pending_uids = hal_nvs_write_pending_uids,
+};
 
 /* ── PN532 bit-bang SPI (LSB-first, mode 0) ─────────────────────────────── */
 
@@ -223,6 +331,7 @@ static void app_on_set_pin(void *ctx, uint32_t pin_hash, const char *box_name, u
     app->pin_hash = pin_hash;
     strncpy(app->box_name, box_name, IMB_NAME_LEN - 1);
     app->box_name[IMB_NAME_LEN - 1] = '\0';
+    nvs_save_identity(pin_hash, box_name);
     imb_ble_update_adv(pin_hash, IMB_MODE_FIELD_CHECK, 0, box_name);
     printf("[BLE] setup complete — pin_hash=0x%08lX  name=%s\n",
            (unsigned long)pin_hash, box_name);
@@ -235,6 +344,7 @@ static void app_on_box_rename(void *ctx, const char *new_name, uint8_t msg_id)
     app_ctx_t *app = (app_ctx_t *)ctx;
     strncpy(app->box_name, new_name, IMB_NAME_LEN - 1);
     app->box_name[IMB_NAME_LEN - 1] = '\0';
+    nvs_save_box_name(app->pin_hash, app->box_name);
     imb_ble_update_adv(app->pin_hash, IMB_MODE_FIELD_CHECK, 0, app->box_name);
     printf("[BLE] box renamed → %s\n", app->box_name);
 }
@@ -305,6 +415,14 @@ void app_main(void)
         nvs_flash_init();
     }
 
+    /* Load persisted identity — if nothing stored yet, box is in SETUP mode */
+    uint32_t stored_pin_hash = nvs_load_pin_hash();
+    char     stored_box_name[IMB_NAME_LEN] = "Box1";
+    if (stored_pin_hash != 0)
+        nvs_load_box_name(stored_box_name, sizeof(stored_box_name));
+    printf("[NVS] loaded pin_hash=0x%08lX  name=%s\n",
+           (unsigned long)stored_pin_hash, stored_box_name);
+
     /* GPIO init */
     gpio_config_t out_cfg = {
         .pin_bit_mask = (1ULL<<PIN_MOSI)|(1ULL<<PIN_SCK)|(1ULL<<PIN_CS0)|(1ULL<<PIN_CS1),
@@ -341,7 +459,10 @@ void app_main(void)
     imb_session_init(&session);
 
     static app_ctx_t app_ctx;
-    app_ctx.session = &session;
+    app_ctx.session  = &session;
+    app_ctx.pin_hash = stored_pin_hash;
+    strncpy(app_ctx.box_name, stored_box_name, IMB_NAME_LEN - 1);
+    app_ctx.box_name[IMB_NAME_LEN - 1] = '\0';
 
     static imb_detector_t detector;
     imb_detector_init(&detector, 500, get_ms, on_scan_event, &app_ctx);
@@ -362,8 +483,8 @@ void app_main(void)
     };
 
     imb_ble_session_config_t sess_cfg = {
-        .pin_hash = 0,  /* SETUP mode — no PIN yet */
-        .nvs      = NULL,
+        .pin_hash = stored_pin_hash,
+        .nvs      = &g_nvs_hal,
         .ble      = &ble_hal,
         .app      = &app_cbs,
         .hello_timer = {
@@ -387,8 +508,14 @@ void app_main(void)
         .on_disconnected = imb_ble_session_on_disconnected,
     };
     imb_ble_init(&ble_cbs, NULL);
-    imb_ble_update_adv(0, IMB_MODE_SETUP, 0, "Box1");
-    printf("[INIT] BLE advertising — IMB-SETUP-xxxx\n\n");
+    /* Adv reflects actual persisted state — SETUP if no PIN, named mode otherwise */
+    imb_op_mode_e boot_mode = (stored_pin_hash == 0) ? IMB_MODE_SETUP : IMB_MODE_FIELD_CHECK;
+    imb_op_mode_e stored_mode;
+    if (stored_pin_hash != 0 && hal_nvs_read_op_mode(&stored_mode, NULL) == 0)
+        boot_mode = stored_mode;
+    imb_ble_update_adv(stored_pin_hash, boot_mode, 0, stored_box_name);
+    printf("[INIT] BLE advertising — pin_hash=0x%08lX  mode=%d  name=%s\n\n",
+           (unsigned long)stored_pin_hash, (int)boot_mode, stored_box_name);
 
     /* Main poll loop */
     char uid[15];
