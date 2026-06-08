@@ -1,7 +1,7 @@
 # Project Tasks
 
-> **Current branch:** `feat/buzzer-integration`
-> **Context snapshot:** Phase 1 logic + drivers complete. BLE stack wired in main.c (imb_ble + imb_ble_session). Buzzer component done. LED component not yet built as imb_led. Phase 2 blocked on LED + BLE sanity test.
+> **Current branch:** `main` (feat/buzzer-integration merged 2026-06-08)
+> **Context snapshot:** Phase 1 complete — all logic, BLE stack, buzzer, and LED wired in main.c. Firmware builds clean. BLE contract-compliance fixes applied and documented. Next: BLE sanity test (connection staying up), NVS HAL wiring, then Phase 2 (OLED + buttons).
 
 ---
 
@@ -125,21 +125,22 @@ Callbacks: `on_subscribed(ctx)` [EVENT_NOTIFY CCCD enabled], `on_cmd(ctx, buf, l
 - Connection params: FIELD_CHECK (15–30 ms, lat=0, sup=2 s) / REGISTRATION (100–200 ms, lat=4, sup=6 s)
 
 ### Steps 1–5 — **DONE** (2026-06-07)
-- [x] `imb_protocol`: all message types, pack/unpack, `imb_pkt_cmd_set_pin_t`, locked UUIDs
+- [x] `imb_protocol`: all message types, pack/unpack, `imb_pkt_cmd_set_pin_t`, `imb_pkt_cmd_box_name_t`, locked UUIDs
 - [x] `imb_ble`: NimBLE transport, GATT table, advertise (100–125 ms interval), Just Works + LE SC bonding, both-CCCD subscribe gate, `imb_ble_unpair_current()`
-- [x] `imb_ble_session`: auth gate, 8-event queue, EVENT_DROPPED, mode state machine, CMD_SET_PIN (full), EVENT_MODE on transitions, CMD_UNBOND, REGISTRATION_INCOMPLETE resume, grace window
+- [x] `imb_ble_session`: auth gate, 8-event queue, EVENT_DROPPED, mode state machine, CMD_SET_PIN (full), CMD_BOX_NAME (0x1A), EVENT_MODE on transitions, CMD_UNBOND, REGISTRATION_INCOMPLETE resume, grace window
 - [x] NVS schema: `imb_state` namespace (op_mode, pending_uids) — HAL-injected, not yet wired to real NVS in main.c
-- [x] Integration: `main.c` wires PN532 → imb_detector → imb_session + imb_buzzer + imb_ble_session; app callbacks on_set_pin + on_mode_set implemented
+- [x] Integration: `main.c` wires PN532 → imb_detector → imb_session + imb_buzzer + imb_led + imb_ble_session; app callbacks on_set_pin + on_mode_set + on_box_rename implemented
+- [x] App-side changes documented in `docs/app-ble-changes.md` (9 sections, locked contract in `docs/ble-contract.md`)
 
 ### Remaining BLE / integration tasks
-- [ ] **BLE sanity test**: phone app connects, CMD_HELLO succeeds, stays connected (connection currently dropping — under investigation)
-- [ ] Wire real NVS HAL into `imb_ble_session_init` (currently NULL — mode not persisted across reboots)
+- [ ] **BLE sanity test**: phone app connects, CMD_HELLO succeeds, stays connected (connection dropping — needs serial monitor to diagnose disconnect reason)
+- [ ] Wire real NVS HAL into `imb_ble_session_init` (currently NULL — mode + pending UIDs not persisted across reboots)
 - [ ] Wire `on_name_tag` → PN532 NDEF write → `imb_ble_session_ack()`
 - [ ] Wire `on_accept_tag` → `imb_registry` accept/reject
 - [ ] Wire lid-close: `imb_delta` → `imb_ble_session_deliver_report()`
 - [ ] REGISTRATION_INCOMPLETE lid-open-rescan recovery
 - [ ] Factory reset: 10 s BOOT button hold → erase NVS namespaces + NimBLE bond store → reboot
-- [ ] App-side changes documented in `docs/app-ble-changes.md`
+- [ ] Deep sleep + BOOT button wake: GPIO 0 wakes from deep sleep
 
 ---
 
