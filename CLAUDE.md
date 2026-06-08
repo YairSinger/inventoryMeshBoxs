@@ -30,6 +30,17 @@ To prevent drift between the firmware (C) and phone app (Flutter/Dart), we use a
 3.  **Code Generation**: A script in the phone repository parses the C headers to generate Dart model classes.
 4.  **Enforcement**: Changes to the protocol MUST be made in the firmware repo first, then pulled into the phone repo via submodule update.
 
+## Domain Terminology (from CONTEXT.md)
+
+Strictly adhere to the following domain language in comments, docs, and code naming:
+*   **Mesh**: A decentralized collection of Boxes sharing a PIN Hash. (Avoid: Network, group)
+*   **Box**: The physical ESP32-S3 node. (Avoid: Device, node)
+*   **Tag**: The physical NFC sticker/chip used for detection. (Avoid: Chip, sensor)
+*   **Item**: The conceptual object (e.g., "Flashlight") attached to a Tag. (Avoid: Object, asset)
+*   **Reachable**: A Box actively communicating over the mesh backhaul. (Avoid: Online, connected)
+*   **Item Registration**: The act of associating an Item with a Tag. (Avoid: Tagging, enrolling)
+*   **Anonymous Tag**: A Tag detected but not yet registered. (Avoid: Pending tag, unknown tag)
+
 ## Hot rules (always apply, no need to open subdocs)
 
 - **`imb_local` NVS is ground truth.** Never derive item presence from `imb_mesh` when local data exists.
