@@ -386,8 +386,8 @@ static int ndef_write(int cs, const tag_t *tag, const char *text)
     size_t  ndef_len = build_ndef_text(text, ndef, sizeof(ndef));
     if (ndef_len == 0) return 0;
 
-    /* NTAG213 — page write, 4 bytes per page starting at page 4 */
-    if (tag->atqa[0] == 0x44 && tag->atqa[1] == 0x00 && tag->sak == 0x00) {
+    /* T2T family (NTAG213/215/216, Ultralight…) — page write, 4 bytes per page */
+    if (tag->sak == 0x00) {
         size_t pages = (ndef_len + 3) / 4;
         for (size_t p = 0; p < pages; p++) {
             uint8_t page[4] = {0};
@@ -406,8 +406,8 @@ static int ndef_write(int cs, const tag_t *tag, const char *text)
         return 1;
     }
 
-    /* MIFARE Classic — gen1a backdoor unlock, then raw block 4 write */
-    if (tag->atqa[0] == 0x00 && tag->atqa[1] == 0x04 && tag->sak == 0x08) {
+    /* MIFARE Classic 1K/4K gen1a clone — backdoor unlock, then raw block 4 write */
+    if (tag->sak == 0x08 || tag->sak == 0x09 || tag->sak == 0x18 || tag->sak == 0x19) {
         uint8_t payload1[3] = {0xD4, 0x42, 0x40};
         uint8_t frame1[16], resp1[16] = {0};
         send_recv(cs, frame1, build_frame(frame1, payload1, sizeof(payload1)), resp1, sizeof(resp1));
@@ -433,6 +433,78 @@ static int ndef_write(int cs, const tag_t *tag, const char *text)
     }
 
     return 0;  /* unknown tag type */
+}
+
+/* Read NDEF Text record from tag on cs; writes null-terminated name into name_out.
+ * Returns 1 if a non-empty name was found, 0 otherwise.
+ * Reads 48 bytes (NTAG213: 3×ReadPage; MIFARE Classic gen1a: 3×ReadBlock after unlock). */
+static int ndef_read(int cs, const tag_t *tag, char *name_out, size_t max_name)
+{
+    uint8_t raw[48] = {0};
+
+    if (tag->sak == 0x00) {
+        /* ISO 14443-A Type 2 Tag (T2T): NTAG213/215/216, Ultralight, Ultralight-C, etc.
+         * All use the same page-read command (0x30). Read pages 4, 8, 12 = 48 bytes. */
+        static const uint8_t pages[3] = {4, 8, 12};
+        for (int p = 0; p < 3; p++) {
+            uint8_t payload[] = {0xD4, 0x40, 0x01, 0x30, pages[p]};
+            uint8_t frame[16], resp[32] = {0};
+            send_recv(cs, frame, build_frame(frame, payload, sizeof(payload)), resp, sizeof(resp));
+            for (int i = 0; i < 26; i++) {
+                if (resp[i] == 0xD5 && resp[i+1] == 0x41 && resp[i+2] == 0x00) {
+                    memcpy(raw + p * 16, resp + i + 3, 16);
+                    break;
+                }
+            }
+        }
+    } else if (tag->sak == 0x08 || tag->sak == 0x09 || tag->sak == 0x18 || tag->sak == 0x19) {
+        /* MIFARE Classic (1K/4K) gen1a clone: backdoor unlock then three ReadBlock commands.
+         * gen1a magic bytes work regardless of exact variant/manufacturer. */
+        uint8_t p1[3] = {0xD4, 0x42, 0x40};
+        uint8_t f1[16], r1[16] = {0};
+        send_recv(cs, f1, build_frame(f1, p1, sizeof(p1)), r1, sizeof(r1));
+        vTaskDelay(pdMS_TO_TICKS(10));
+        uint8_t p2[3] = {0xD4, 0x42, 0x43};
+        uint8_t f2[16], r2[16] = {0};
+        send_recv(cs, f2, build_frame(f2, p2, sizeof(p2)), r2, sizeof(r2));
+
+        static const uint8_t blocks[3] = {4, 5, 6};
+        for (int b = 0; b < 3; b++) {
+            uint8_t p3[4] = {0xD4, 0x42, 0x30, blocks[b]};
+            uint8_t f3[16], r3[24] = {0};
+            send_recv(cs, f3, build_frame(f3, p3, sizeof(p3)), r3, sizeof(r3));
+            for (int i = 0; i < 20; i++) {
+                if (r3[i] == 0xD5 && r3[i+1] == 0x43 && r3[i+2] == 0x00) {
+                    memcpy(raw + b * 16, r3 + i + 3, 16);
+                    break;
+                }
+            }
+        }
+    } else {
+        return 0;
+    }
+
+    /* Parse NDEF TLV: 0x03 | rec_len | record... | 0xFE */
+    if (raw[0] != 0x03) return 0;
+    uint8_t rec_len = raw[1];
+    if (rec_len < 7 || (size_t)(2 + rec_len) > sizeof(raw)) return 0;
+
+    uint8_t *rec = raw + 2;
+    /* flags=0xD1 type_len=0x01 payload_len type='T' status lang... text */
+    if (rec[0] != 0xD1 || rec[1] != 0x01) return 0;
+    uint8_t payload_len = rec[2];
+    if (rec[3] != 0x54) return 0;       /* type must be "T" */
+    if (payload_len < 3) return 0;      /* status + 2-char lang + ≥1 text char */
+
+    uint8_t lang_len  = rec[4] & 0x3F;
+    size_t  text_len  = payload_len - 1 - lang_len;
+    if (text_len == 0 || lang_len > payload_len - 1) return 0;
+
+    uint8_t *text = rec + 5 + lang_len;
+    size_t   copy = text_len < max_name - 1 ? text_len : max_name - 1;
+    memcpy(name_out, text, copy);
+    name_out[copy] = '\0';
+    return 1;
 }
 
 /* Scan cs for a tag whose UID matches target_uid; returns found tag or found=0. */
@@ -637,10 +709,32 @@ static void on_scan_event(const imb_scan_event_t *e, void *ctx)
     strncpy(pkt.uid, e->uid, IMB_UID_LEN - 1);
     pkt.uid[IMB_UID_LEN - 1] = '\0';
     pkt.name[0] = '\0';
-    /* Populate name so phone skips re-prompt for already-registered tags */
+
     imb_item_t item;
-    if (app->registry && imb_registry_get(app->registry, e->uid, &item) == IMB_REG_OK)
+    if (app->registry && imb_registry_get(app->registry, e->uid, &item) == IMB_REG_OK) {
+        /* Already registered — populate name so phone skips re-prompt */
         strncpy(pkt.name, item.name, IMB_NAME_LEN - 1);
+    } else if (e->dir == IMB_INSERT && app->registry) {
+        /* Unknown tag on INSERT — read NDEF and auto-register if it carries a name.
+         * This enables items to migrate between meshes: the name travels with the tag. */
+        tag_t found = find_tag_by_uid(PIN_CS0, e->uid);
+        int   cs    = PIN_CS0;
+        if (!found.found) { found = find_tag_by_uid(PIN_CS1, e->uid); cs = PIN_CS1; }
+        if (found.found) {
+            char ndef_name[IMB_NAME_LEN] = {0};
+            if (ndef_read(cs, &found, ndef_name, IMB_NAME_LEN) && ndef_name[0] != '\0') {
+                imb_item_t new_item;
+                strncpy(new_item.uid,  e->uid,    IMB_UID_LEN  - 1);
+                new_item.uid[IMB_UID_LEN - 1] = '\0';
+                strncpy(new_item.name, ndef_name, IMB_NAME_LEN - 1);
+                new_item.name[IMB_NAME_LEN - 1] = '\0';
+                if (imb_registry_add(app->registry, &new_item) == IMB_REG_OK) {
+                    strncpy(pkt.name, ndef_name, IMB_NAME_LEN - 1);
+                    printf("[NDEF] auto-registered uid=%s name=%s\n", e->uid, ndef_name);
+                }
+            }
+        }
+    }
     imb_ble_session_push_event_tag(&pkt);
 }
 
