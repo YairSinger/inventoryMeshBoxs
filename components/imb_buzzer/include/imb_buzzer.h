@@ -16,6 +16,7 @@ typedef enum {
     IMB_BUZZ_ERROR,
     IMB_BUZZ_BLE_CONNECTED,
     IMB_BUZZ_FACTORY_RESET,
+    IMB_BUZZ_TAG_WRITTEN,   /* two quick high beeps — NDEF write succeeded */
 } imb_buzzer_pattern_e;
 
 void imb_buzzer_init(const imb_buzzer_hal_t *hal);

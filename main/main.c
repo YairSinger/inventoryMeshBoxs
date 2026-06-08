@@ -447,6 +447,8 @@ static tag_t find_tag_by_uid(int cs, const char *target_uid)
     return t;
 }
 
+static uint32_t get_ms(void);  /* forward declaration — defined after factory_reset */
+
 /* ── BLE session timer HAL ──────────────────────────────────────────────── */
 
 typedef struct {
@@ -510,12 +512,16 @@ static void ble_hal_unbond(void *ctx)
 
 /* ── App context ────────────────────────────────────────────────────────── */
 
-/* Pending name-tag request set by BLE task, consumed by main loop */
+/* Pending name-tag request set by BLE task, consumed by main loop.
+ * 60-second window: BLE task sets active=1; main loop polls the PN532
+ * until target UID found and written, timeout, or BLE disconnect. */
 typedef struct {
-    volatile int active;       /* 1 = request pending */
-    char uid[IMB_UID_LEN];
-    char name[IMB_NAME_LEN];
-    uint8_t msg_id;
+    volatile int active;       /* 1 = window open; 0 = idle/aborted */
+    char     uid[IMB_UID_LEN];
+    char     name[IMB_NAME_LEN];
+    uint8_t  msg_id;
+    uint32_t deadline_ms;      /* get_ms() + 60000 at request start */
+    uint8_t  led_state;        /* 0=uninit 1=scanning 2=active-breathing */
 } name_tag_req_t;
 
 typedef struct {
@@ -525,6 +531,9 @@ typedef struct {
     char            box_name[IMB_NAME_LEN];
     name_tag_req_t  name_req;
 } app_ctx_t;
+
+/* File-scope so the BLE disconnect wrapper can abort an in-flight write. */
+static app_ctx_t g_app;
 
 /* Called by session after CMD_SET_PIN succeeds */
 static void app_on_set_pin(void *ctx, uint32_t pin_hash, const char *box_name, uint8_t msg_id)
@@ -566,21 +575,33 @@ static void app_on_mode_set(void *ctx, imb_op_mode_e mode, uint8_t msg_id)
 }
 
 /* Called by BLE session when phone sends CMD_NAME { uid, name }.
- * Stores the request; NDEF write + registry update happen in the main loop
- * to avoid concurrent SPI access from the NimBLE task. */
+ * Opens a 60-second write window; the main loop polls the PN532 until
+ * the target UID is found and written, the window expires, or BLE drops. */
 static void app_on_name_tag(void *ctx, const char *uid, const char *name, uint8_t msg_id)
 {
     app_ctx_t *app = (app_ctx_t *)ctx;
-    if (app->name_req.active) {
-        /* Previous request still in-flight — shouldn't happen, but drop it */
+    if (app->name_req.active)
         printf("[WARN] on_name_tag: overwriting in-flight request uid=%s\n", uid);
-    }
     strncpy(app->name_req.uid,  uid,  IMB_UID_LEN  - 1);
     strncpy(app->name_req.name, name, IMB_NAME_LEN - 1);
     app->name_req.uid[IMB_UID_LEN  - 1] = '\0';
     app->name_req.name[IMB_NAME_LEN - 1] = '\0';
-    app->name_req.msg_id = msg_id;
-    app->name_req.active = 1;   /* publish last — main loop polls this */
+    app->name_req.msg_id      = msg_id;
+    app->name_req.deadline_ms = get_ms() + 60000;
+    app->name_req.led_state   = 0;
+    app->name_req.active      = 1;   /* publish last — main loop polls this */
+}
+
+/* Called when BLE client disconnects — abort any in-flight write window.
+ * Per spec: tag stays anonymous, no ACK sent. */
+static void app_on_ble_disconnected(void *ctx)
+{
+    if (g_app.name_req.active) {
+        g_app.name_req.active = 0;
+        imb_led_play(IMB_LED_BLE_IDLE);
+        printf("[NDEF] write aborted — BLE disconnected\n");
+    }
+    imb_ble_session_on_disconnected(ctx);
 }
 
 static void on_scan_event(const imb_scan_event_t *e, void *ctx)
@@ -713,15 +734,14 @@ void app_main(void)
     static imb_session_t session;
     imb_session_init(&session);
 
-    static app_ctx_t app_ctx;
-    app_ctx.session  = &session;
-    app_ctx.registry = &registry;
-    app_ctx.pin_hash = stored_pin_hash;
-    strncpy(app_ctx.box_name, stored_box_name, IMB_NAME_LEN - 1);
-    app_ctx.box_name[IMB_NAME_LEN - 1] = '\0';
+    g_app.session  = &session;
+    g_app.registry = &registry;
+    g_app.pin_hash = stored_pin_hash;
+    strncpy(g_app.box_name, stored_box_name, IMB_NAME_LEN - 1);
+    g_app.box_name[IMB_NAME_LEN - 1] = '\0';
 
     static imb_detector_t detector;
-    imb_detector_init(&detector, 500, get_ms, on_scan_event, &app_ctx);
+    imb_detector_init(&detector, 500, get_ms, on_scan_event, &g_app);
     printf("[INIT] Detector ready\n");
 
     /* BLE session HALs */
@@ -736,7 +756,7 @@ void app_main(void)
         .on_set_pin    = app_on_set_pin,
         .on_mode_set   = app_on_mode_set,
         .on_box_rename = app_on_box_rename,
-        .ctx           = &app_ctx,
+        .ctx           = &g_app,
     };
 
     imb_ble_session_config_t sess_cfg = {
@@ -762,7 +782,7 @@ void app_main(void)
         .on_connected    = imb_ble_session_on_connected,
         .on_subscribed   = imb_ble_session_on_subscribed,
         .on_cmd          = imb_ble_session_on_cmd,
-        .on_disconnected = imb_ble_session_on_disconnected,
+        .on_disconnected = app_on_ble_disconnected,
     };
     imb_ble_init(&ble_cbs, NULL);
     /* Adv reflects actual persisted state — SETUP if no PIN, named mode otherwise */
@@ -775,15 +795,15 @@ void app_main(void)
            (unsigned long)stored_pin_hash, (int)boot_mode, stored_box_name);
 
     /* Main poll loop */
-    char uid[15];
+    char     uid[15];
     uint32_t boot_hold_start = 0;
     int      boot_held       = 0;
     while (1) {
         /* Factory reset: detect 10 s BOOT button hold (GPIO 0, active-low) */
         if (gpio_get_level(PIN_BOOT) == 0) {
             if (!boot_held) {
-                boot_held        = 1;
-                boot_hold_start  = get_ms();
+                boot_held       = 1;
+                boot_hold_start = get_ms();
                 imb_led_play(IMB_LED_FACTORY_HOLD);
                 imb_buzzer_play(IMB_BUZZ_FACTORY_RESET);
                 printf("[BOOT] button held — release within 10 s to cancel\n");
@@ -801,54 +821,82 @@ void app_main(void)
                 printf("[BOOT] button released — factory reset cancelled\n");
             }
         }
-        /* Handle pending name-tag NDEF write (set by BLE task via app_on_name_tag) */
-        if (app_ctx.name_req.active) {
-            app_ctx.name_req.active = 0;
-            const char *req_uid  = app_ctx.name_req.uid;
-            const char *req_name = app_ctx.name_req.name;
-            uint8_t     req_mid  = app_ctx.name_req.msg_id;
 
-            printf("[NDEF] writing '%s' to tag uid=%s\n", req_name, req_uid);
-
-            tag_t tag    = find_tag_by_uid(PIN_CS0, req_uid);
-            int   tag_cs = PIN_CS0;
-            if (!tag.found) { tag = find_tag_by_uid(PIN_CS1, req_uid); tag_cs = PIN_CS1; }
-
-            imb_ack_status_e ack_status = IMB_ACK_NDEF_WRITE_FAILED;
-            if (tag.found && ndef_write(tag_cs, &tag, req_name)) {
-                imb_item_t item;
-                strncpy(item.uid,  req_uid,  IMB_UID_LEN  - 1); item.uid[IMB_UID_LEN  - 1] = '\0';
-                strncpy(item.name, req_name, IMB_NAME_LEN - 1); item.name[IMB_NAME_LEN - 1] = '\0';
-                imb_reg_err_e reg_err = imb_registry_add(app_ctx.registry, &item);
-                if (reg_err == IMB_REG_OK) {
-                    ack_status = IMB_ACK_OK;
-                    printf("[NDEF] registered uid=%s name=%s\n", req_uid, req_name);
-                } else if (reg_err == IMB_REG_ERR_FULL) {
-                    ack_status = IMB_ACK_REGISTRY_FULL;
-                    printf("[NDEF] registry full — uid=%s\n", req_uid);
-                } else {
-                    printf("[NDEF] registry add failed err=%d uid=%s\n", reg_err, req_uid);
-                }
-            } else {
-                printf("[NDEF] write failed — tag %s on reader\n",
-                       tag.found ? "found but write failed" : "not found");
-            }
-            imb_ble_session_ack(req_mid, ack_status);
-        }
-
+        /* Scan both readers */
         tag_t t0 = scan_tag(PIN_CS0);
-        if (t0.found) {
-            uid_to_str(&t0, uid);
-            imb_detector_on_reader_event(&detector, 0, uid);
-        }
-
         tag_t t1 = scan_tag(PIN_CS1);
-        if (t1.found) {
-            uid_to_str(&t1, uid);
-            imb_detector_on_reader_event(&detector, 1, uid);
+
+        /* Feed results to detector for normal insert/extract tracking */
+        if (t0.found) { uid_to_str(&t0, uid); imb_detector_on_reader_event(&detector, 0, uid); }
+        if (t1.found) { uid_to_str(&t1, uid); imb_detector_on_reader_event(&detector, 1, uid); }
+        imb_detector_tick(&detector);
+
+        /* Async NDEF write window (60 s): opened by CMD_NAME, runs across loop ticks.
+         * Only write if scanned UID matches the requested UID.
+         * Abort silently on BLE disconnect (active cleared by app_on_ble_disconnected). */
+        if (g_app.name_req.active) {
+            uint32_t now = get_ms();
+
+            if ((int32_t)(now - g_app.name_req.deadline_ms) >= 0) {
+                /* Window expired */
+                uint8_t mid = g_app.name_req.msg_id;
+                g_app.name_req.active = 0;
+                imb_ble_session_ack(mid, IMB_ACK_NDEF_WRITE_FAILED);
+                imb_led_play(IMB_LED_BLE_IDLE);
+                printf("[NDEF] 60s window expired — uid=%s\n", g_app.name_req.uid);
+            } else {
+                /* Find target UID in this tick's scan results */
+                int   target_found = 0;
+                int   target_cs    = -1;
+                tag_t target_tag   = {0};
+                char  uid_str[15];
+
+                if (t0.found) {
+                    uid_to_str(&t0, uid_str);
+                    if (strcmp(uid_str, g_app.name_req.uid) == 0) {
+                        target_found = 1; target_cs = PIN_CS0; target_tag = t0;
+                    }
+                }
+                if (!target_found && t1.found) {
+                    uid_to_str(&t1, uid_str);
+                    if (strcmp(uid_str, g_app.name_req.uid) == 0) {
+                        target_found = 1; target_cs = PIN_CS1; target_tag = t1;
+                    }
+                }
+
+                /* LED feedback: breathing teal when tag present, solid teal when scanning */
+                uint8_t want_led = target_found ? 2 : 1;
+                if (g_app.name_req.led_state != want_led) {
+                    g_app.name_req.led_state = want_led;
+                    imb_led_play(want_led == 2 ? IMB_LED_WRITE_ACTIVE : IMB_LED_WRITE_SCANNING);
+                }
+
+                if (target_found) {
+                    if (ndef_write(target_cs, &target_tag, g_app.name_req.name)) {
+                        imb_item_t item;
+                        strncpy(item.uid,  g_app.name_req.uid,  IMB_UID_LEN  - 1);
+                        item.uid[IMB_UID_LEN  - 1] = '\0';
+                        strncpy(item.name, g_app.name_req.name, IMB_NAME_LEN - 1);
+                        item.name[IMB_NAME_LEN - 1] = '\0';
+
+                        imb_ack_status_e ack_status = IMB_ACK_OK;
+                        imb_reg_err_e    reg_err    = imb_registry_add(g_app.registry, &item);
+                        if (reg_err == IMB_REG_ERR_FULL)  ack_status = IMB_ACK_REGISTRY_FULL;
+                        else if (reg_err != IMB_REG_OK)   ack_status = IMB_ACK_NDEF_WRITE_FAILED;
+
+                        uint8_t mid = g_app.name_req.msg_id;
+                        g_app.name_req.active = 0;
+                        imb_buzzer_play(IMB_BUZZ_TAG_WRITTEN);
+                        imb_led_play(IMB_LED_REG_PASS);
+                        imb_ble_session_ack(mid, ack_status);
+                        printf("[NDEF] registered uid=%s name=%s status=%d\n",
+                               item.uid, item.name, (int)ack_status);
+                    }
+                    /* Write failed — tag may have moved; keep window open and retry */
+                }
+            }
         }
 
-        imb_detector_tick(&detector);
         vTaskDelay(pdMS_TO_TICKS(50));
     }
 }
