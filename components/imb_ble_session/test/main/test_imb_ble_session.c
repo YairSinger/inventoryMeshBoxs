@@ -136,12 +136,13 @@ typedef struct {
 
 static app_spy_t g_app;
 
-static void spy_on_name_tag(void *ctx, const char *uid, uint8_t msg_id)
+static void spy_on_name_tag(void *ctx, const char *uid, const char *name, uint8_t msg_id)
 {
     app_spy_t *s = (app_spy_t *)ctx;
     strncpy(s->name_tag_uid, uid, IMB_UID_LEN - 1);
     s->name_tag_msg_id = msg_id;
     s->name_tag_count++;
+    (void)name;
 }
 
 static void spy_on_mode_set(void *ctx, imb_op_mode_e mode, uint8_t msg_id)
@@ -246,12 +247,14 @@ static void authenticate(uint32_t pin)
     g_ble.event_call_count = 0;
 }
 
-/* Pull the last EVENT_ACK the spy received */
+/* Pull the last EVENT_ACK the spy received (skip trailing EVENT_MODE etc.) */
 static imb_pkt_event_ack_t last_ack(void)
 {
-    int idx = g_ble.event_call_count - 1;
-    imb_pkt_event_ack_t out;
-    imb_proto_unpack_event_ack(g_ble.event_bufs[idx], g_ble.event_lens[idx], &out);
+    imb_pkt_event_ack_t out = {0};
+    for (int i = g_ble.event_call_count - 1; i >= 0; i--) {
+        if (imb_proto_unpack_event_ack(g_ble.event_bufs[i], g_ble.event_lens[i], &out) == 0)
+            return out;
+    }
     return out;
 }
 

@@ -40,7 +40,7 @@ typedef struct {
 /* ── App callbacks ──────────────────────────────────────────────────────── */
 
 typedef struct {
-    void (*on_name_tag)(void *ctx, const char *uid, uint8_t msg_id);
+    void (*on_name_tag)(void *ctx, const char *uid, const char *name, uint8_t msg_id);
     void (*on_accept_tag)(void *ctx, const char *uid, uint8_t accepted, uint8_t msg_id);
     void (*on_mode_set)(void *ctx, imb_op_mode_e mode, uint8_t msg_id);
     /* pin_hash + box_name: app must persist to NVS and call imb_ble_update_adv() */

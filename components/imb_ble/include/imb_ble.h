@@ -52,3 +52,6 @@ void imb_ble_disconnect(void);
 
 /* Erase NimBLE bond for the currently connected peer. */
 void imb_ble_unpair_current(void);
+
+/* Erase all stored NimBLE bonds (called during factory reset). */
+void imb_ble_clear_all_bonds(void);
