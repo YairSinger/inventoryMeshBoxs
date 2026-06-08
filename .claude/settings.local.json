@@ -4,7 +4,15 @@
       "Bash(export IDF_PATH=/Users/yair/esp/esp-idf)",
       "Bash(export IDF_PYTHON_ENV_PATH=/Users/yair/.espressif/python_env/idf5.3_py3.9_env)",
       "Bash(export PATH=\"$IDF_PYTHON_ENV_PATH/bin:$IDF_PATH/tools:$PATH\")",
-      "Bash(python3 /Users/yair/esp/esp-idf/tools/idf.py --version)"
+      "Bash(python3 /Users/yair/esp/esp-idf/tools/idf.py --version)",
+      "Bash(gh repo *)",
+      "Skill(grill-me)",
+      "Bash(bash -c 'source ~/esp/esp-idf/export.sh 2>/dev/null; idf.py -p /dev/cu.usbserial-A5069RR4 flash')",
+      "Bash(git -C /Users/yair/git/inventoryMeshBoxs add CLAUDE.md TASKS.md main/main.c .claude/skills/dev-setup.md .claude/settings.local.json)",
+      "Bash(git -C /Users/yair/git/inventoryMeshBoxs commit -m ' *)",
+      "Bash(git -C /Users/yair/git/skills add chip-integration.md)",
+      "Bash(git -C /Users/yair/git/skills commit -m ' *)",
+      "WebSearch"
     ]
   }
 }
