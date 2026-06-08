@@ -80,9 +80,7 @@ All components under `components/imb_*/`. Run tests: `cd components/<name>/test 
 - [ ] Deep sleep + BOOT button wake: GPIO 0 wakes from deep sleep
 - [x] BLE GATT server: phone connects, subscribes to notify chars, writes COMMAND_WRITE — **DONE** (imb_ble + imb_ble_session wired in main.c)
 - [x] Passive buzzer (GPIO 17, LEDC PWM): `imb_buzzer` component, 6 named patterns, wired to NFC events — **DONE**
-- [ ] **`imb_led` component** (WS2812B GPIO 48): extract into HAL-pattern component and wire into main.c
-  - Contract in `docs/protocols.md`: 10 patterns (insert=green pulse, extract=red pulse, ambiguous=yellow flash, reg-pass=solid green 2s, reg-fail=red double-flash, BLE-idle=white dim 3s, mesh-disc=blue breathing, factory-reset-hold=slow red breathing, factory-reset=fast red flash, sleep=off)
-  - WS2812B RMT driver confirmed working in earlier session directly in main.c — needs extracting into `components/imb_led/` following same HAL pattern as `imb_buzzer`
+- [x] **`imb_led` component** (WS2812B GPIO 48): HAL-pattern component, 9 named patterns, wired to NFC events — **DONE** (7/7 host tests PASS; RMT HAL in imb_led_rmt.c)
 
 ## Phase 1 — BLE Server (architecture decided 2026-05-31)
 

@@ -1,12 +1,13 @@
 /* IMB Node — main application loop
  *
- * Stack: PN532 (bit-bang SPI) → imb_detector → imb_session + imb_buzzer + imb_ble_session
+ * Stack: PN532 (bit-bang SPI) → imb_detector → imb_session + imb_buzzer + imb_led + imb_ble_session
  *
  * Wiring (hardware.md):
  *   MOSI=11, MISO=13, SCK=12
  *   CS inner (reader 0) = GPIO10
  *   CS outer (reader 1) = GPIO9
  *   Buzzer = GPIO17 (LEDC PWM, direct drive)
+ *   LED    = GPIO48 (WS2812B via RMT)
  */
 #include <stdio.h>
 #include <string.h>
@@ -19,6 +20,8 @@
 #include "nvs_flash.h"
 #include "imb_buzzer.h"
 #include "imb_buzzer_ledc.h"
+#include "imb_led.h"
+#include "imb_led_rmt.h"
 #include "imb_detector.h"
 #include "imb_session.h"
 #include "imb_ble.h"
@@ -257,16 +260,19 @@ static void on_scan_event(const imb_scan_event_t *e, void *ctx)
     switch (e->dir) {
     case IMB_INSERT:
         imb_buzzer_play(IMB_BUZZ_TAG_PLACED);
+        imb_led_play(IMB_LED_TAG_INSERT);
         printf("[EVENT] INSERT  uid=%s  present=%u\n",
                e->uid, app->session->present_count);
         break;
     case IMB_EXTRACT:
         imb_buzzer_play(IMB_BUZZ_ITEM_REMOVED);
+        imb_led_play(IMB_LED_TAG_EXTRACT);
         printf("[EVENT] EXTRACT uid=%s  present=%u\n",
                e->uid, app->session->present_count);
         break;
     case IMB_AMBIGUOUS:
         imb_buzzer_play(IMB_BUZZ_UNKNOWN_TAG);
+        imb_led_play(IMB_LED_AMBIGUOUS);
         printf("[EVENT] AMBIGUOUS uid=%s\n", e->uid);
         break;
     }
@@ -324,6 +330,11 @@ void app_main(void)
     imb_buzzer_hal_t buz_hal = imb_buzzer_ledc_init();
     imb_buzzer_init(&buz_hal);
     printf("[INIT] Buzzer ready\n");
+
+    /* LED init */
+    imb_led_hal_t led_hal = imb_led_rmt_init();
+    imb_led_init(&led_hal);
+    printf("[INIT] LED ready\n");
 
     /* Session + detector init */
     static imb_session_t session;
