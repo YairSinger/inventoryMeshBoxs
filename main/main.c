@@ -1,6 +1,6 @@
 /* IMB Node — main application loop
  *
- * Stack: PN532 (bit-bang SPI) → imb_detector → imb_session + imb_buzzer + imb_led + imb_ble_session
+ * Stack: PN532 (bit-bang SPI) → imb_nfc → imb_detector → imb_session + imb_buzzer + imb_led + imb_ble_session
  *
  * Wiring (hardware.md):
  *   MOSI=11, MISO=13, SCK=12
@@ -15,8 +15,6 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/timers.h"
-#include "driver/gpio.h"
-#include "rom/ets_sys.h"
 #include "esp_timer.h"
 #include "nvs_flash.h"
 #include "nvs.h"
@@ -24,6 +22,8 @@
 #include "imb_buzzer_ledc.h"
 #include "imb_led.h"
 #include "imb_led_rmt.h"
+#include "imb_nfc.h"
+#include "imb_nfc_pn532.h"
 #include "imb_detector.h"
 #include "imb_session.h"
 #include "imb_registry.h"
@@ -217,307 +217,6 @@ static const imb_ble_session_nvs_hal_t g_nvs_hal = {
     .read_pending_uids  = hal_nvs_read_pending_uids,
     .write_pending_uids = hal_nvs_write_pending_uids,
 };
-
-/* ── PN532 bit-bang SPI (LSB-first, mode 0) ─────────────────────────────── */
-
-static const uint8_t k_sam_config[] = {
-    0x00,0x00,0xFF,0x05,0xFB, 0xD4,0x14,0x01,0x00,0x00, 0x17,0x00
-};
-static const uint8_t k_rfconfig[] = {
-    0x00,0x00,0xFF,0x06,0xFA, 0xD4,0x32,0x05,0xFF,0xFF,0x03, 0xF4,0x00
-};
-static const uint8_t k_14443a[] = {
-    0x00,0x00,0xFF,0x04,0xFC, 0xD4,0x4A,0x01,0x00, 0xE1,0x00
-};
-
-static uint8_t bb_byte(uint8_t out)
-{
-    uint8_t in = 0;
-    for (int i = 0; i < 8; i++) {
-        gpio_set_level(PIN_MOSI, (out >> i) & 1);
-        ets_delay_us(2);
-        gpio_set_level(PIN_SCK, 1);
-        ets_delay_us(2);
-        if (gpio_get_level(PIN_MISO)) in |= (1 << i);
-        gpio_set_level(PIN_SCK, 0);
-        ets_delay_us(2);
-    }
-    return in;
-}
-
-static void bb_write(int cs, const uint8_t *buf, size_t len)
-{
-    gpio_set_level(cs, 0); ets_delay_us(5);
-    for (size_t i = 0; i < len; i++) bb_byte(buf[i]);
-    ets_delay_us(5); gpio_set_level(cs, 1);
-}
-
-static void bb_read(int cs, uint8_t cmd, uint8_t *rx, size_t len)
-{
-    gpio_set_level(cs, 0); ets_delay_us(5);
-    bb_byte(cmd);
-    for (size_t i = 0; i < len; i++) rx[i] = bb_byte(0x00);
-    ets_delay_us(5); gpio_set_level(cs, 1);
-}
-
-static int wait_ready(int cs, int tries, int delay_ms)
-{
-    for (int i = 0; i < tries; i++) {
-        uint8_t s = 0;
-        bb_read(cs, 0x02, &s, 1);
-        if (s == 0x01) return 1;
-        vTaskDelay(pdMS_TO_TICKS(delay_ms));
-    }
-    return 0;
-}
-
-static void send_recv(int cs, const uint8_t *frame, size_t flen,
-                      uint8_t *resp, size_t rlen)
-{
-    uint8_t wbuf[64];
-    wbuf[0] = 0x01; /* DATAWRITE */
-    memcpy(wbuf + 1, frame, flen);
-    bb_write(cs, wbuf, flen + 1);
-    if (!wait_ready(cs, 50, 10)) return;
-    uint8_t ack[6] = {0}; bb_read(cs, 0x03, ack, 6);
-    if (!wait_ready(cs, 50, 10)) return;
-    bb_read(cs, 0x03, resp, rlen);
-}
-
-static void pn532_wakeup(int cs)
-{
-    gpio_set_level(cs, 0); vTaskDelay(pdMS_TO_TICKS(10));
-    gpio_set_level(cs, 1); vTaskDelay(pdMS_TO_TICKS(5));
-}
-
-static void pn532_init(int cs)
-{
-    uint8_t r[8] = {0};
-    send_recv(cs, k_sam_config, sizeof(k_sam_config), r, sizeof(r));
-    send_recv(cs, k_rfconfig,   sizeof(k_rfconfig),   r, sizeof(r));
-}
-
-typedef struct {
-    uint8_t atqa[2];
-    uint8_t sak;
-    uint8_t uid[10];
-    uint8_t uid_len;
-    int     found;
-} tag_t;
-
-static tag_t scan_tag(int cs)
-{
-    tag_t t = {0};
-    uint8_t wbuf[sizeof(k_14443a) + 1];
-    wbuf[0] = 0x01;
-    memcpy(wbuf + 1, k_14443a, sizeof(k_14443a));
-    bb_write(cs, wbuf, sizeof(wbuf));
-    if (!wait_ready(cs, 50, 10)) return t;
-    uint8_t ack[6] = {0}; bb_read(cs, 0x03, ack, 6);
-    if (!wait_ready(cs, 50, 10)) return t;
-    uint8_t resp[32] = {0}; bb_read(cs, 0x03, resp, sizeof(resp));
-    for (int i = 0; i < 28; i++) {
-        if (resp[i] == 0xD5 && resp[i+1] == 0x4B && resp[i+2] > 0) {
-            t.atqa[0]  = resp[i+4]; t.atqa[1] = resp[i+5];
-            t.sak      = resp[i+6];
-            t.uid_len  = resp[i+7]; if (t.uid_len > 10) t.uid_len = 10;
-            memcpy(t.uid, resp + i + 8, t.uid_len);
-            t.found = 1;
-            return t;
-        }
-    }
-    return t;
-}
-
-static void uid_to_str(const tag_t *t, char out[15])
-{
-    int n = t->uid_len > 7 ? 7 : t->uid_len;
-    int i;
-    for (i = 0; i < n; i++) snprintf(out + i * 2, 3, "%02X", t->uid[i]);
-    out[i * 2] = '\0';
-}
-
-/* ── NDEF + PN532 frame helpers ─────────────────────────────────────────── */
-
-/* payload = TFI (0xD4) + command bytes */
-static size_t build_frame(uint8_t *out, const uint8_t *payload, size_t plen)
-{
-    out[0] = 0x00; out[1] = 0x00; out[2] = 0xFF;
-    out[3] = (uint8_t)plen;
-    out[4] = (uint8_t)(256 - plen);
-    memcpy(out + 5, payload, plen);
-    uint8_t dcs = 0;
-    for (size_t i = 0; i < plen; i++) dcs += payload[i];
-    out[5 + plen] = (uint8_t)(256 - dcs);
-    out[6 + plen] = 0x00;
-    return 7 + plen;
-}
-
-/* Build an NDEF Text record TLV (UTF-8, lang "en") into buf.
- * Returns bytes written, 0 if buf too small. */
-static size_t build_ndef_text(const char *text, uint8_t *buf, size_t max)
-{
-    size_t tlen        = strlen(text);
-    size_t payload_len = 1 + 2 + tlen;  /* status + "en" + text */
-    size_t record_len  = 4 + payload_len;
-    size_t total       = 1 + 1 + record_len + 1;  /* 0x03 + len + record + 0xFE */
-    if (total > max || payload_len > 255 || record_len > 255) return 0;
-
-    size_t i = 0;
-    buf[i++] = 0x03;
-    buf[i++] = (uint8_t)record_len;
-    buf[i++] = 0xD1;  /* MB ME SR TNF=001 Well-Known */
-    buf[i++] = 0x01;  /* type length */
-    buf[i++] = (uint8_t)payload_len;
-    buf[i++] = 0x54;  /* "T" */
-    buf[i++] = 0x02;  /* UTF-8, 2-char lang code */
-    buf[i++] = 0x65;  /* 'e' */
-    buf[i++] = 0x6E;  /* 'n' */
-    memcpy(buf + i, text, tlen); i += tlen;
-    buf[i++] = 0xFE;  /* TLV terminator */
-    return i;
-}
-
-/* Write NDEF text record to tag on cs. Returns 1 on success, 0 on failure.
- * Supports NTAG213 (ATQA=4400 SAK=00) and MIFARE Classic gen1a (ATQA=0004 SAK=08). */
-static int ndef_write(int cs, const tag_t *tag, const char *text)
-{
-    uint8_t ndef[64];
-    size_t  ndef_len = build_ndef_text(text, ndef, sizeof(ndef));
-    if (ndef_len == 0) return 0;
-
-    /* T2T family (NTAG213/215/216, Ultralight…) — page write, 4 bytes per page */
-    if (tag->sak == 0x00) {
-        size_t pages = (ndef_len + 3) / 4;
-        for (size_t p = 0; p < pages; p++) {
-            uint8_t page[4] = {0};
-            size_t  off = p * 4;
-            size_t  n   = (ndef_len - off < 4) ? (ndef_len - off) : 4;
-            memcpy(page, ndef + off, n);
-            uint8_t payload[] = {0xD4, 0x40, 0x01, 0xA2, (uint8_t)(4 + p),
-                                  page[0], page[1], page[2], page[3]};
-            uint8_t frame[32], resp[12] = {0};
-            send_recv(cs, frame, build_frame(frame, payload, sizeof(payload)), resp, sizeof(resp));
-            int ok = 0;
-            for (int j = 0; j < 10; j++)
-                if (resp[j] == 0xD5 && resp[j+1] == 0x41) { ok = (resp[j+2] == 0); break; }
-            if (!ok) return 0;
-        }
-        return 1;
-    }
-
-    /* MIFARE Classic 1K/4K gen1a clone — backdoor unlock, then raw block 4 write */
-    if (tag->sak == 0x08 || tag->sak == 0x09 || tag->sak == 0x18 || tag->sak == 0x19) {
-        uint8_t payload1[3] = {0xD4, 0x42, 0x40};
-        uint8_t frame1[16], resp1[16] = {0};
-        send_recv(cs, frame1, build_frame(frame1, payload1, sizeof(payload1)), resp1, sizeof(resp1));
-        vTaskDelay(pdMS_TO_TICKS(10));
-
-        uint8_t payload2[3] = {0xD4, 0x42, 0x43};
-        uint8_t frame2[16], resp2[16] = {0};
-        send_recv(cs, frame2, build_frame(frame2, payload2, sizeof(payload2)), resp2, sizeof(resp2));
-
-        uint8_t block[16] = {0};
-        size_t  n = ndef_len < 16 ? ndef_len : 16;
-        memcpy(block, ndef, n);
-
-        uint8_t wcmd[20];
-        wcmd[0] = 0xD4; wcmd[1] = 0x42; wcmd[2] = 0xA0; wcmd[3] = 4;
-        memcpy(wcmd + 4, block, 16);
-        uint8_t frame3[40], resp3[16] = {0};
-        send_recv(cs, frame3, build_frame(frame3, wcmd, sizeof(wcmd)), resp3, sizeof(resp3));
-
-        for (int j = 0; j + 2 < 16; j++)
-            if (resp3[j] == 0xD5 && resp3[j+1] == 0x43 && resp3[j+2] == 0x00) return 1;
-        return 0;
-    }
-
-    return 0;  /* unknown tag type */
-}
-
-/* Read NDEF Text record from tag on cs; writes null-terminated name into name_out.
- * Returns 1 if a non-empty name was found, 0 otherwise.
- * Reads 48 bytes (NTAG213: 3×ReadPage; MIFARE Classic gen1a: 3×ReadBlock after unlock). */
-static int ndef_read(int cs, const tag_t *tag, char *name_out, size_t max_name)
-{
-    uint8_t raw[48] = {0};
-
-    if (tag->sak == 0x00) {
-        /* ISO 14443-A Type 2 Tag (T2T): NTAG213/215/216, Ultralight, Ultralight-C, etc.
-         * All use the same page-read command (0x30). Read pages 4, 8, 12 = 48 bytes. */
-        static const uint8_t pages[3] = {4, 8, 12};
-        for (int p = 0; p < 3; p++) {
-            uint8_t payload[] = {0xD4, 0x40, 0x01, 0x30, pages[p]};
-            uint8_t frame[16], resp[32] = {0};
-            send_recv(cs, frame, build_frame(frame, payload, sizeof(payload)), resp, sizeof(resp));
-            for (int i = 0; i < 26; i++) {
-                if (resp[i] == 0xD5 && resp[i+1] == 0x41 && resp[i+2] == 0x00) {
-                    memcpy(raw + p * 16, resp + i + 3, 16);
-                    break;
-                }
-            }
-        }
-    } else if (tag->sak == 0x08 || tag->sak == 0x09 || tag->sak == 0x18 || tag->sak == 0x19) {
-        /* MIFARE Classic (1K/4K) gen1a clone: backdoor unlock then three ReadBlock commands.
-         * gen1a magic bytes work regardless of exact variant/manufacturer. */
-        uint8_t p1[3] = {0xD4, 0x42, 0x40};
-        uint8_t f1[16], r1[16] = {0};
-        send_recv(cs, f1, build_frame(f1, p1, sizeof(p1)), r1, sizeof(r1));
-        vTaskDelay(pdMS_TO_TICKS(10));
-        uint8_t p2[3] = {0xD4, 0x42, 0x43};
-        uint8_t f2[16], r2[16] = {0};
-        send_recv(cs, f2, build_frame(f2, p2, sizeof(p2)), r2, sizeof(r2));
-
-        static const uint8_t blocks[3] = {4, 5, 6};
-        for (int b = 0; b < 3; b++) {
-            uint8_t p3[4] = {0xD4, 0x42, 0x30, blocks[b]};
-            uint8_t f3[16], r3[24] = {0};
-            send_recv(cs, f3, build_frame(f3, p3, sizeof(p3)), r3, sizeof(r3));
-            for (int i = 0; i < 20; i++) {
-                if (r3[i] == 0xD5 && r3[i+1] == 0x43 && r3[i+2] == 0x00) {
-                    memcpy(raw + b * 16, r3 + i + 3, 16);
-                    break;
-                }
-            }
-        }
-    } else {
-        return 0;
-    }
-
-    /* Parse NDEF TLV: 0x03 | rec_len | record... | 0xFE */
-    if (raw[0] != 0x03) return 0;
-    uint8_t rec_len = raw[1];
-    if (rec_len < 7 || (size_t)(2 + rec_len) > sizeof(raw)) return 0;
-
-    uint8_t *rec = raw + 2;
-    /* flags=0xD1 type_len=0x01 payload_len type='T' status lang... text */
-    if (rec[0] != 0xD1 || rec[1] != 0x01) return 0;
-    uint8_t payload_len = rec[2];
-    if (rec[3] != 0x54) return 0;       /* type must be "T" */
-    if (payload_len < 3) return 0;      /* status + 2-char lang + ≥1 text char */
-
-    uint8_t lang_len  = rec[4] & 0x3F;
-    size_t  text_len  = payload_len - 1 - lang_len;
-    if (text_len == 0 || lang_len > payload_len - 1) return 0;
-
-    uint8_t *text = rec + 5 + lang_len;
-    size_t   copy = text_len < max_name - 1 ? text_len : max_name - 1;
-    memcpy(name_out, text, copy);
-    name_out[copy] = '\0';
-    return 1;
-}
-
-/* Scan cs for a tag whose UID matches target_uid; returns found tag or found=0. */
-static tag_t find_tag_by_uid(int cs, const char *target_uid)
-{
-    tag_t t = scan_tag(cs);
-    if (!t.found) return t;
-    char uid_str[15];
-    uid_to_str(&t, uid_str);
-    if (strcmp(uid_str, target_uid) == 0) return t;
-    t.found = 0;
-    return t;
-}
 
 static uint32_t get_ms(void);  /* forward declaration — defined after factory_reset */
 
@@ -714,15 +413,20 @@ static void on_scan_event(const imb_scan_event_t *e, void *ctx)
     if (app->registry && imb_registry_get(app->registry, e->uid, &item) == IMB_REG_OK) {
         /* Already registered — populate name so phone skips re-prompt */
         strncpy(pkt.name, item.name, IMB_NAME_LEN - 1);
-    } else if (e->dir == IMB_INSERT && app->registry) {
-        /* Unknown tag on INSERT — read NDEF and auto-register if it carries a name.
+    } else if (app->registry) {
+        /* Unknown tag (any direction) — read NDEF and auto-register if it carries a name.
+         * Covers INSERT and AMBIGUOUS (tag seen on both readers or already present on boot).
          * This enables items to migrate between meshes: the name travels with the tag. */
-        tag_t found = find_tag_by_uid(PIN_CS0, e->uid);
-        int   cs    = PIN_CS0;
-        if (!found.found) { found = find_tag_by_uid(PIN_CS1, e->uid); cs = PIN_CS1; }
+        imb_nfc_tag_t found;
+        uint8_t found_reader = 0;
+        if (!imb_nfc_find_by_uid(0, e->uid, &found)) {
+            found_reader = 1;
+            imb_nfc_find_by_uid(1, e->uid, &found);
+        }
         if (found.found) {
             char ndef_name[IMB_NAME_LEN] = {0};
-            if (ndef_read(cs, &found, ndef_name, IMB_NAME_LEN) && ndef_name[0] != '\0') {
+            if (imb_nfc_read_ndef(found_reader, &found, ndef_name, IMB_NAME_LEN)
+                    && ndef_name[0] != '\0') {
                 imb_item_t new_item;
                 strncpy(new_item.uid,  e->uid,    IMB_UID_LEN  - 1);
                 new_item.uid[IMB_UID_LEN - 1] = '\0';
@@ -788,25 +492,21 @@ void app_main(void)
     printf("[NVS] loaded pin_hash=0x%08lX  name=%s\n",
            (unsigned long)stored_pin_hash, stored_box_name);
 
-    /* GPIO init */
-    gpio_config_t out_cfg = {
-        .pin_bit_mask = (1ULL<<PIN_MOSI)|(1ULL<<PIN_SCK)|(1ULL<<PIN_CS0)|(1ULL<<PIN_CS1),
-        .mode = GPIO_MODE_OUTPUT,
-    };
-    gpio_config(&out_cfg);
-    gpio_config_t in_cfg = {
-        .pin_bit_mask = (1ULL<<PIN_MISO)|(1ULL<<PIN_BOOT),
+    /* BOOT button GPIO (CS and SPI pins owned by imb_nfc_pn532_init) */
+    gpio_config_t boot_cfg = {
+        .pin_bit_mask = (1ULL << PIN_BOOT),
         .mode         = GPIO_MODE_INPUT,
         .pull_up_en   = GPIO_PULLUP_ENABLE,
     };
-    gpio_config(&in_cfg);
-    gpio_set_level(PIN_CS0, 1);
-    gpio_set_level(PIN_CS1, 1);
-    vTaskDelay(pdMS_TO_TICKS(500));
+    gpio_config(&boot_cfg);
 
-    /* PN532 init */
-    pn532_wakeup(PIN_CS0); pn532_init(PIN_CS0);
-    pn532_wakeup(PIN_CS1); pn532_init(PIN_CS1);
+    /* NFC init (configures SPI pins and wakes both PN532 readers) */
+    imb_nfc_pn532_config_t pn532_cfg = {
+        .mosi = PIN_MOSI, .miso = PIN_MISO, .sck = PIN_SCK,
+        .cs   = {PIN_CS0, PIN_CS1},
+    };
+    imb_nfc_hal_t nfc_hal = imb_nfc_pn532_init(&pn532_cfg);
+    imb_nfc_init(&nfc_hal);
     printf("[INIT] PN532 readers ready\n");
 
     /* Buzzer init */
@@ -889,7 +589,6 @@ void app_main(void)
            (unsigned long)stored_pin_hash, (int)boot_mode, stored_box_name);
 
     /* Main poll loop */
-    char     uid[15];
     uint32_t boot_hold_start = 0;
     int      boot_held       = 0;
     while (1) {
@@ -917,12 +616,13 @@ void app_main(void)
         }
 
         /* Scan both readers */
-        tag_t t0 = scan_tag(PIN_CS0);
-        tag_t t1 = scan_tag(PIN_CS1);
+        imb_nfc_tag_t t0, t1;
+        imb_nfc_scan(0, &t0);
+        imb_nfc_scan(1, &t1);
 
         /* Feed results to detector for normal insert/extract tracking */
-        if (t0.found) { uid_to_str(&t0, uid); imb_detector_on_reader_event(&detector, 0, uid); }
-        if (t1.found) { uid_to_str(&t1, uid); imb_detector_on_reader_event(&detector, 1, uid); }
+        if (t0.found) imb_detector_on_reader_event(&detector, 0, t0.uid_str);
+        if (t1.found) imb_detector_on_reader_event(&detector, 1, t1.uid_str);
         imb_detector_tick(&detector);
 
         /* Async NDEF write window (60 s): opened by CMD_NAME, runs across loop ticks.
@@ -940,22 +640,14 @@ void app_main(void)
                 printf("[NDEF] 60s window expired — uid=%s\n", g_app.name_req.uid);
             } else {
                 /* Find target UID in this tick's scan results */
-                int   target_found = 0;
-                int   target_cs    = -1;
-                tag_t target_tag   = {0};
-                char  uid_str[15];
+                int           target_found   = 0;
+                uint8_t       target_reader  = 0;
+                imb_nfc_tag_t target_tag     = {0};
 
-                if (t0.found) {
-                    uid_to_str(&t0, uid_str);
-                    if (strcmp(uid_str, g_app.name_req.uid) == 0) {
-                        target_found = 1; target_cs = PIN_CS0; target_tag = t0;
-                    }
-                }
-                if (!target_found && t1.found) {
-                    uid_to_str(&t1, uid_str);
-                    if (strcmp(uid_str, g_app.name_req.uid) == 0) {
-                        target_found = 1; target_cs = PIN_CS1; target_tag = t1;
-                    }
+                if (t0.found && strcmp(t0.uid_str, g_app.name_req.uid) == 0) {
+                    target_found = 1; target_reader = 0; target_tag = t0;
+                } else if (t1.found && strcmp(t1.uid_str, g_app.name_req.uid) == 0) {
+                    target_found = 1; target_reader = 1; target_tag = t1;
                 }
 
                 /* LED feedback: breathing teal when tag present, solid teal when scanning */
@@ -966,7 +658,7 @@ void app_main(void)
                 }
 
                 if (target_found) {
-                    if (ndef_write(target_cs, &target_tag, g_app.name_req.name)) {
+                    if (imb_nfc_write_ndef(target_reader, &target_tag, g_app.name_req.name)) {
                         imb_item_t item;
                         strncpy(item.uid,  g_app.name_req.uid,  IMB_UID_LEN  - 1);
                         item.uid[IMB_UID_LEN  - 1] = '\0';
