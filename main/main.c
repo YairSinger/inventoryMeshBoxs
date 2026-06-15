@@ -16,6 +16,7 @@
 #include "freertos/task.h"
 #include "freertos/timers.h"
 #include "esp_timer.h"
+#include "driver/gpio.h"
 #include "nvs_flash.h"
 #include "nvs.h"
 #include "imb_buzzer.h"
