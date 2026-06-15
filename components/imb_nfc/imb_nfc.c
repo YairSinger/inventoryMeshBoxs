@@ -71,6 +71,12 @@ int imb_nfc_read_ndef(uint8_t reader_id, const imb_nfc_tag_t *tag,
     if (!g_hal.read_pages(reader_id, tag, 4, raw, sizeof(raw), g_hal.ctx))
         return 0;
 
+    /* DEBUG — print raw page-4 bytes so format mismatches are visible in the log */
+    printf("[nfc] page4 raw: %02X %02X %02X %02X  %02X %02X %02X %02X"
+           "  %02X %02X %02X %02X  %02X %02X %02X %02X\n",
+           raw[0],raw[1],raw[2],raw[3], raw[4],raw[5],raw[6],raw[7],
+           raw[8],raw[9],raw[10],raw[11], raw[12],raw[13],raw[14],raw[15]);
+
     /* Parse NDEF TLV: 0x03 | rec_len | record... | 0xFE */
     if (raw[0] != 0x03) return 0;
     uint8_t rec_len = raw[1];

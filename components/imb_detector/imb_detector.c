@@ -48,8 +48,8 @@ void imb_detector_on_reader_event(imb_detector_t *det,
     bool in_window   = (now - det->pending_ts) <= det->window_ms;
 
     if (same_uid && !same_reader && in_window) {
-        /* directional pair: reader 0 first = INSERT, reader 1 first = EXTRACT */
-        imb_direction_e dir = (det->pending_reader == 0) ? IMB_INSERT : IMB_EXTRACT;
+        /* directional pair: reader 1 (outer) first = INSERT, reader 0 (inner) first = EXTRACT */
+        imb_direction_e dir = (det->pending_reader == 1) ? IMB_INSERT : IMB_EXTRACT;
         fire(det, dir, uid);
         clear_pending(det);
         return;

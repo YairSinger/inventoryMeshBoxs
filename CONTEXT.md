@@ -32,6 +32,10 @@ _Avoid_: Tagging, enrolling, binding
 A Tag that has been physically detected by a Box but has not yet been associated with an Item through Registration.
 _Avoid_: Pending tag, unknown tag, incomplete item
 
+**Ambiguous Detection**:
+A Tag detection where only one reader fired within the directional window, so whether the Tag was inserted or extracted could not be determined. It becomes the Tag's current state and is surfaced in the report, but is superseded if a later Insert or Extract Detection for the same Tag resolves the direction.
+_Avoid_: Pending direction, unresolved scan, ambiguous tag
+
 ## Relationships
 
 - A **Mesh** consists of one or more **Boxes**.
@@ -50,3 +54,4 @@ _Avoid_: Pending tag, unknown tag, incomplete item
 - "Online" was used to mean both Bluetooth connection to a phone and ESP-Mesh peer-to-peer presence. Resolved: Use **Reachable** for mesh peer presence.
 - "Item" and "Tag" were used interchangeably. Resolved: A **Tag** is the physical identifier (sticker), an **Item** is the conceptual object it represents.
 - "Pending" was used for tags waiting to be named. Resolved: Use **Anonymous Tag** to avoid confusion with async programming states.
+- "AMBIGUOUS" was used both for a single scan's undetermined direction and, separately, for a Tag's general presence uncertainty (e.g. an Extract with no recorded presence). Resolved: **Ambiguous Detection** covers only the former — it is the Tag's state until superseded by a later Insert/Extract for that Tag. An Extract for a Tag with no current presence record has nothing to supersede and is a no-op.
