@@ -92,6 +92,29 @@ Production code populates the struct with real ESP-IDF driver functions. Host te
 
 Each driver component has a standalone ESP-IDF test project under `components/<name>/test/` with its own `CMakeLists.txt` + `sdkconfig`. Flash to hardware to run. Results appear on serial monitor.
 
+### Standalone test tool binaries (`tools/`)
+
+Larger integration tests live under `tools/<name>/` as full ESP-IDF projects. Two mandatory rules apply to every tool binary — omitting either will cause silent hangs:
+
+**1. `CONFIG_FREERTOS_UNICORE=y` in `sdkconfig.defaults`**
+
+Without this, `nvs_flash_init` (and any other call that triggers `spi_flash_mmap`) will hang indefinitely at startup. Root cause: on a dual-core build, `spi_flash_disable_interrupts_caches_and_other_cpu()` must pause CPU1 via IPC before disabling the flash cache. Tool binaries have no BLE stack, so CPU1 is not yet in a state where it services IPC interrupts at the point `nvs_flash_init` is called — the IPC spin never resolves. Symptom: TWDT fires repeatedly at a frozen timestamp (~300ms), board in a soft reboot loop, backtrace stuck inside `esp_mmu_map`. Single-core mode skips the CPU1 pause entirely. The production firmware is unaffected because NimBLE brings CPU1 up before `nvs_flash_init` runs.
+
+**2. Do not add `esp_psram` to the `COMPONENTS` list**
+
+Even with `CONFIG_SPIRAM` disabled in sdkconfig, listing `esp_psram` explicitly links its init hooks and can interfere with flash/MMU initialisation. Only include it if the tool binary explicitly allocates PSRAM.
+
+Minimal `sdkconfig.defaults` for any tool binary:
+```
+CONFIG_IDF_TARGET="esp32s3"
+CONFIG_FREERTOS_UNICORE=y
+```
+
+Minimal `CMakeLists.txt` component list (omit `esp_psram`):
+```cmake
+set(COMPONENTS main imb_nfc imb_detector imb_registry imb_session imb_types)
+```
+
 ## Naming conventions
 
 - Enums: `_e` suffix (e.g. `imb_op_mode_e`)
