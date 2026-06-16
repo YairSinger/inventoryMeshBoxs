@@ -11,6 +11,10 @@ typedef struct {
 
 /* ── Pattern table ───────────────────────────────────────────────────────── */
 
+static const buzz_step_t k_tag_detected[] = {
+    { 2200, 30, 0 },
+};
+
 static const buzz_step_t k_tag_placed[] = {
     { 2700, 50, 0 },
 };
@@ -98,6 +102,10 @@ void imb_buzzer_init(const imb_buzzer_hal_t *hal)
 void imb_buzzer_play(imb_buzzer_pattern_e pattern)
 {
     switch (pattern) {
+    case IMB_BUZZ_TAG_DETECTED:
+        g_state.steps   = k_tag_detected;
+        g_state.n_steps = 1;
+        break;
     case IMB_BUZZ_TAG_PLACED:
         g_state.steps   = k_tag_placed;
         g_state.n_steps = 1;

@@ -376,6 +376,12 @@ static void app_on_ble_disconnected(void *ctx)
     imb_ble_session_on_disconnected(ctx);
 }
 
+static void on_tag_first_seen(const char *uid, void *ctx)
+{
+    (void)uid; (void)ctx;
+    imb_buzzer_play(IMB_BUZZ_TAG_DETECTED);
+}
+
 static void on_scan_event(const imb_scan_event_t *e, void *ctx)
 {
     app_ctx_t *app = (app_ctx_t *)ctx;
@@ -537,6 +543,7 @@ void app_main(void)
 
     static imb_detector_t detector;
     imb_detector_init(&detector, 500, get_ms, on_scan_event, &g_app);
+    detector.on_first_seen = on_tag_first_seen;
     printf("[INIT] Detector ready\n");
 
     /* BLE session HALs */

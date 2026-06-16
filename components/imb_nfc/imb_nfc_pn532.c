@@ -175,8 +175,14 @@ static int mifare_auth_block(int cs, imb_nfc_tag_t *tag, uint8_t block)
 
     for (int k = 0; k < N_MIFARE_KEYS; k++) {
         if (k > 0) {
-            /* Re-select: failed auth drops card to IDLE */
-            if (!pn532_scan(reader_id, tag, NULL)) {
+            /* Re-select after failed auth: card drops to IDLE.
+               Some clone cards need a few ms to recover — retry briefly. */
+            int reselected = 0;
+            for (int r = 0; r < 5; r++) {
+                if (pn532_scan(reader_id, tag, NULL)) { reselected = 1; break; }
+                vTaskDelay(pdMS_TO_TICKS(10));
+            }
+            if (!reselected) {
                 printf("[mifare] tag lost during key probe\n");
                 return 0;
             }
