@@ -17,8 +17,10 @@ typedef enum {
     IMB_LED_MESH_DISC,      /* blue slow breathing, continuous */
     IMB_LED_BLE_IDLE,       /* dim white pulse every 3 s, continuous */
     IMB_LED_FACTORY_HOLD,   /* slow red breathing, continuous */
-    IMB_LED_FACTORY_RESET,  /* fast red flash, continuous */
-    IMB_LED_SLEEP,          /* off immediately */
+    IMB_LED_FACTORY_RESET,   /* fast red flash, continuous */
+    IMB_LED_WRITE_SCANNING,  /* solid teal, continuous — waiting for target tag in field */
+    IMB_LED_WRITE_ACTIVE,    /* teal breathing, continuous — tag detected, write in progress */
+    IMB_LED_SLEEP,           /* off immediately */
 } imb_led_pattern_e;
 
 void imb_led_init(const imb_led_hal_t *hal);

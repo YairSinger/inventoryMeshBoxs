@@ -33,6 +33,15 @@ static const led_step_t k_factory_hold[] = {
 };
 static const led_step_t k_ble_idle[]       = { {30, 30, 30, 200, 2800} };
 static const led_step_t k_factory_reset[]  = { {255, 0, 0, 100, 100} };
+/* Teal breathing (write active — tag in field) */
+static const led_step_t k_write_active[] = {
+    {0,  32,  32, 200, 0}, {0,  64,  64, 200, 0},
+    {0, 128, 128, 200, 0}, {0, 255, 255, 200, 0},
+    {0, 128, 128, 200, 0}, {0,  64,  64, 200, 0},
+    {0,  32,  32, 200, 0}, {0,   0,   0, 200, 0},
+};
+/* Solid dim teal (write scanning — waiting for tag) */
+static const led_step_t k_write_scanning[] = { {0, 80, 80, 60000, 0} };
 
 typedef struct {
     const led_step_t *steps;
@@ -144,6 +153,16 @@ void imb_led_play(imb_led_pattern_e pattern)
     case IMB_LED_FACTORY_RESET:
         g_state.steps   = k_factory_reset;
         g_state.n_steps = 1;
+        g_state.repeats = 1;
+        break;
+    case IMB_LED_WRITE_SCANNING:
+        g_state.steps   = k_write_scanning;
+        g_state.n_steps = 1;
+        g_state.repeats = 1;
+        break;
+    case IMB_LED_WRITE_ACTIVE:
+        g_state.steps   = k_write_active;
+        g_state.n_steps = 8;
         g_state.repeats = 1;
         break;
     case IMB_LED_SLEEP:

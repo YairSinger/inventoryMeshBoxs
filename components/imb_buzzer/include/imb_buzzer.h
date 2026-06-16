@@ -10,12 +10,14 @@ typedef struct {
 } imb_buzzer_hal_t;
 
 typedef enum {
-    IMB_BUZZ_TAG_PLACED = 0,
-    IMB_BUZZ_ITEM_REMOVED,
-    IMB_BUZZ_UNKNOWN_TAG,
+    IMB_BUZZ_TAG_DETECTED = 0, /* short soft beep — tag first seen on a reader */
+    IMB_BUZZ_TAG_PLACED,       /* direction confirmed: INSERT */
+    IMB_BUZZ_ITEM_REMOVED,     /* direction confirmed: EXTRACT */
+    IMB_BUZZ_UNKNOWN_TAG,      /* window expired with no direction — AMBIGUOUS */
     IMB_BUZZ_ERROR,
     IMB_BUZZ_BLE_CONNECTED,
     IMB_BUZZ_FACTORY_RESET,
+    IMB_BUZZ_TAG_WRITTEN,      /* two quick high beeps — NDEF write succeeded */
 } imb_buzzer_pattern_e;
 
 void imb_buzzer_init(const imb_buzzer_hal_t *hal);

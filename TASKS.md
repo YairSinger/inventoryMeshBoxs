@@ -1,7 +1,7 @@
 # Project Tasks
 
-> **Current branch:** `feat/item-registration` (branched from main 2026-06-08)
-> **Context snapshot:** Provisioning flow fully wired and NVS-persistent (pin_hash, box_name, op_mode survive reboot). BLE auth debug logging added. Next: item registration — NDEF write, registry wiring, on_name_tag callback.
+> **Current branch:** `feat/async-ndef-write` (branched from `feat/item-registration`, merged to main 2026-06-08)
+> **Context snapshot:** Async 60s NDEF write window + read-back/cross-mesh auto-register implemented; PN532/NDEF extracted into `imb_nfc` component with HAL. 2026-06-15 bringup session fixed reader-direction convention, MIFARE key fallback, and session ambiguous-resolution. 2026-06-16: `tools/box_scenario_test` unblocked — fixed dual-core IPC hang in standalone tool binaries (`FREERTOS_UNICORE=y` + no `esp_psram`); documented in `docs/testing.md`. Test binary boots clean and reaches Phase A. Next: run the full 3-boot scenario test (Phase A–E) with cards 1-9.
 
 ---
 
@@ -29,6 +29,16 @@
 - Neither chip drives MISO in response to `GetFirmwareVersion` (`00 00 FF 02 FE D4 02 2A 00`)
 - Conclusion: chips are powered + on the bus but **not in SPI mode**, or not receiving SCK/MOSI
 - Next time: physically verify SW1/SW2 jumper positions against board silkscreen; measure 3.3V at both VCC pads; consider scope/LA capture of SCK + MOSI at PN532 input pin to confirm signals arrive
+
+### Session 2026-06-15 — direction convention, MIFARE keys, ambiguous resolution
+- **Old board (MAC `e0:72:a1:d3:62:34`) flash chip is dead** — unresponsive to esptool across power cycles/cables/ports. Set aside.
+- **New board (MAC `e0:72:a1:d4:0f:00`)** confirmed working, same wiring/pinout. Use this going forward.
+- **9 NDEF cards written + verified** on the outer reader (GPIO9) — `card1`..`card9`, UIDs recorded in `tools/card_write_test`. Cards 6/7/9 needed MIFARE key2 (`D3F7D3F7D3F7`) instead of the factory default.
+- **Fixed reader-direction inversion** in `imb_detector`: outer reader (1) first = INSERT, inner (0) first = EXTRACT, matching the documented turnstile convention (`docs/protocols.md`).
+- **Added MIFARE key-cache fallback** (key0/key1/key2) in `imb_nfc_pn532` so cards provisioned with non-default keys authenticate.
+- **Fixed `imb_session` ambiguous resolution**: an Ambiguous Detection for a Tag is now superseded by the next clear INSERT/EXTRACT for that Tag (latest wins); an orphan EXTRACT (no presence record) is a no-op. `CONTEXT.md` now defines **Ambiguous Detection** to resolve the prior overloaded use of "AMBIGUOUS".
+- Committed as `03088bc` (gpio.h fix + HW test prompts) and `c943059` (direction/MIFARE/session fixes).
+- New `components/imb_nfc/test_hw` on-device test added (Group 5 movement scenarios).
 
 ### Tasks
 - [x] PN532 #1 (CS GPIO10): verify `GetFirmwareVersion` returns `IC=0x32 Ver=1` — **DONE** (IC=0x32 Ver=1 Rev=6)
@@ -196,5 +206,4 @@ Callbacks: `on_subscribed(ctx)` [EVENT_NOTIFY CCCD enabled], `on_cmd(ctx, buf, l
 - [x] Host test runner: plain Makefile + vendored Unity (zero ESP-IDF dep)
 - [x] Host test structure documented in CLAUDE.md
 - [x] Dev-setup skill: `.claude/skills/dev-setup.md`
-- [ ] On-device test structure: standalone ESP-IDF project per driver component (see CLAUDE.md)
-n-device test structure: standalone ESP-IDF project per driver component (see CLAUDE.md)
+- [ ] On-device test structure: standalone ESP-IDF project per driver component (see CLAUDE.md) — `components/imb_nfc/test_hw` (driver-level) and `tools/box_scenario_test` (full NVS/session integration, in progress) are the first instances

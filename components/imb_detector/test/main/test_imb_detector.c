@@ -37,26 +37,28 @@ void tearDown(void) {}
 
 /* ── tests ────────────────────────────────────────────────────────────── */
 
-void test_reader0_then_reader1_within_window_fires_INSERT(void)
+/* outer(reader1)→inner(reader0) = INSERT */
+void test_reader1_then_reader0_within_window_fires_INSERT(void)
 {
     imb_detector_t det = make_detector();
 
-    imb_detector_on_reader_event(&det, 0, "04A32F123456EF");
-    mock_ms = 100;
     imb_detector_on_reader_event(&det, 1, "04A32F123456EF");
+    mock_ms = 100;
+    imb_detector_on_reader_event(&det, 0, "04A32F123456EF");
 
     TEST_ASSERT_EQUAL_INT(1, event_count);
     TEST_ASSERT_EQUAL_INT(IMB_INSERT, recorded_events[0].dir);
     TEST_ASSERT_EQUAL_STRING("04A32F123456EF", recorded_events[0].uid);
 }
 
-void test_reader1_then_reader0_within_window_fires_EXTRACT(void)
+/* inner(reader0)→outer(reader1) = EXTRACT */
+void test_reader0_then_reader1_within_window_fires_EXTRACT(void)
 {
     imb_detector_t det = make_detector();
 
-    imb_detector_on_reader_event(&det, 1, "04A32F123456EF");
-    mock_ms = 100;
     imb_detector_on_reader_event(&det, 0, "04A32F123456EF");
+    mock_ms = 100;
+    imb_detector_on_reader_event(&det, 1, "04A32F123456EF");
 
     TEST_ASSERT_EQUAL_INT(1, event_count);
     TEST_ASSERT_EQUAL_INT(IMB_EXTRACT, recorded_events[0].dir);

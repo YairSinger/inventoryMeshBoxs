@@ -14,21 +14,26 @@ typedef struct {
     imb_direction_e dir;
 } imb_scan_event_t;
 
+/* Called when a tag is first seen on any reader (before direction is known).
+   uid — UID string of the tag; ctx — opaque pointer from imb_detector_init */
+typedef void (*imb_detector_first_seen_cb_t)(const char *uid, void *ctx);
+
 /* Called when a directional scan event is resolved.
    event — resolved INSERT / EXTRACT / AMBIGUOUS event
    ctx   — opaque pointer supplied at imb_detector_init; passed through unchanged */
 typedef void (*imb_detector_cb_t)(const imb_scan_event_t *event, void *ctx);
 
 typedef struct {
-    uint32_t            window_ms;
-    uint32_t          (*get_ms)(void);
-    imb_detector_cb_t   on_event;
-    void               *ctx;
+    uint32_t                     window_ms;
+    uint32_t                   (*get_ms)(void);
+    imb_detector_first_seen_cb_t on_first_seen; /* optional; set after init; NULL = no-op */
+    imb_detector_cb_t            on_event;
+    void                        *ctx;
     /* internal */
-    bool                has_pending;
-    uint8_t             pending_reader;
-    char                pending_uid[15];
-    uint32_t            pending_ts;
+    bool                         has_pending;
+    uint8_t                      pending_reader;
+    char                         pending_uid[15];
+    uint32_t                     pending_ts;
 } imb_detector_t;
 
 /* window_ms — maximum gap between reader 0 and reader 1 events to count as a pair

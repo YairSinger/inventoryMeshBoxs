@@ -88,14 +88,42 @@ void test_double_insert_moves_to_ambiguous(void)
     TEST_ASSERT_EQUAL_STRING("04A32F123456EF", out[0].uid);
 }
 
-void test_orphan_extract_goes_to_ambiguous(void)
+void test_extract_with_no_present_record_is_noop(void)
 {
-    /* EXTRACT with no prior INSERT */
+    /* EXTRACT with no prior INSERT and no prior AMBIGUOUS — nothing to supersede */
     imb_scan_event_t e = make_event(IMB_EXTRACT, "04A32F123456EF");
     imb_session_apply(&s, &e);
 
     imb_entry_u out[IMB_REGISTRY_MAX_ITEMS];
     TEST_ASSERT_EQUAL_UINT16(0, imb_session_get_present(&s,   out, IMB_REGISTRY_MAX_ITEMS));
-    TEST_ASSERT_EQUAL_UINT16(1, imb_session_get_ambiguous(&s, out, IMB_REGISTRY_MAX_ITEMS));
+    TEST_ASSERT_EQUAL_UINT16(0, imb_session_get_ambiguous(&s, out, IMB_REGISTRY_MAX_ITEMS));
+}
+
+void test_ambiguous_resolved_by_later_insert(void)
+{
+    imb_scan_event_t amb = make_event(IMB_AMBIGUOUS, "04A32F123456EF");
+    imb_scan_event_t ins = make_event(IMB_INSERT,    "04A32F123456EF");
+    imb_session_apply(&s, &amb);
+    imb_session_apply(&s, &ins);
+
+    imb_entry_u out[IMB_REGISTRY_MAX_ITEMS];
+    TEST_ASSERT_EQUAL_UINT16(0, imb_session_get_ambiguous(&s, out, IMB_REGISTRY_MAX_ITEMS));
+
+    uint16_t count = imb_session_get_present(&s, out, IMB_REGISTRY_MAX_ITEMS);
+    TEST_ASSERT_EQUAL_UINT16(1, count);
     TEST_ASSERT_EQUAL_STRING("04A32F123456EF", out[0].uid);
+}
+
+void test_ambiguous_resolved_by_later_extract(void)
+{
+    imb_scan_event_t ins = make_event(IMB_INSERT,    "04A32F123456EF");
+    imb_scan_event_t amb = make_event(IMB_AMBIGUOUS, "04A32F123456EF");
+    imb_scan_event_t ext = make_event(IMB_EXTRACT,   "04A32F123456EF");
+    imb_session_apply(&s, &ins);
+    imb_session_apply(&s, &amb);
+    imb_session_apply(&s, &ext);
+
+    imb_entry_u out[IMB_REGISTRY_MAX_ITEMS];
+    TEST_ASSERT_EQUAL_UINT16(0, imb_session_get_ambiguous(&s, out, IMB_REGISTRY_MAX_ITEMS));
+    TEST_ASSERT_EQUAL_UINT16(0, imb_session_get_present(&s,   out, IMB_REGISTRY_MAX_ITEMS));
 }

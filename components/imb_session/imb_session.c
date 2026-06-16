@@ -35,9 +35,16 @@ static void add_ambiguous(imb_session_t *s, const char *uid)
     }
 }
 
+static void remove_from_ambiguous(imb_session_t *s, const char *uid)
+{
+    int idx = find_uid(s->ambiguous, s->ambiguous_count, uid);
+    if (idx >= 0) remove_at(s->ambiguous, &s->ambiguous_count, (uint16_t)idx);
+}
+
 void imb_session_apply(imb_session_t *s, const imb_scan_event_t *event)
 {
     if (event->dir == IMB_INSERT) {
+        remove_from_ambiguous(s, event->uid);
         int existing = find_uid(s->present, s->present_count, event->uid);
         if (existing >= 0) {
             /* Double-insert: already present — state unclear, move to ambiguous */
@@ -52,12 +59,10 @@ void imb_session_apply(imb_session_t *s, const imb_scan_event_t *event)
     }
 
     if (event->dir == IMB_EXTRACT) {
+        remove_from_ambiguous(s, event->uid);
         int idx = find_uid(s->present, s->present_count, event->uid);
         if (idx >= 0) {
             remove_at(s->present, &s->present_count, (uint16_t)idx);
-        } else {
-            /* Orphan extract: not in present — tag extracted without prior insert */
-            add_ambiguous(s, event->uid);
         }
         return;
     }
