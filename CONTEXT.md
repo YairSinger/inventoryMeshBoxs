@@ -36,6 +36,18 @@ _Avoid_: Pending tag, unknown tag, incomplete item
 A Tag detection where only one reader fired within the directional window, so whether the Tag was inserted or extracted could not be determined. It becomes the Tag's current state and is surfaced in the report, but is superseded if a later Insert or Extract Detection for the same Tag resolves the direction.
 _Avoid_: Pending direction, unresolved scan, ambiguous tag
 
+**Box Report**:
+The result of a lid-close delta computation on a single Box: which Items are Present, Missing, Foreign, or Ambiguous relative to that Box's local registry (`imb_local`). Generated independently of BLE — the OLED screen and BLE are two independent consumers of the same report.
+_Avoid_: Inventory snapshot, sync, upload
+
+**Mesh Report**:
+A consolidated report aggregating Box Reports from all Reachable Boxes in the Mesh. Assembled by the phone after receiving individual Box Reports over BLE.
+_Avoid_: Full report, global report
+
+**Display State**:
+The data struct (`imb_display_state_t`) fed to the display component describing current box status (mode, mesh peer count, phone connectivity, last detection event, report). The display component renders whatever is in this struct and has no knowledge of how values are derived.
+_Avoid_: Screen data, UI state
+
 ## Relationships
 
 - A **Mesh** consists of one or more **Boxes**.
@@ -43,6 +55,8 @@ _Avoid_: Pending direction, unresolved scan, ambiguous tag
 - An **Item** is uniquely identified by one or more **Tags**.
 - A **Box** can be **Reachable** or Unreachable to other Boxes in the Mesh.
 - An **Anonymous Tag** blocks a Box from returning to normal operation until it is removed or undergoes **Item Registration**.
+- Every **Box** generates its own **Box Report** on lid close; the OLED and BLE are independent consumers of it.
+- A **Mesh Report** is assembled by the phone from the **Box Reports** of all Reachable Boxes.
 
 ## Example dialogue
 

@@ -65,7 +65,7 @@ Five namespaces with different trust levels:
 The system uses an **Autonomous Mesh** architecture to ensure consistency without a central server.
 
 - **Full Replication**: Every box mirrors the entire mesh-wide item registry (`imb_mesh`) in its local NVS.
-- **Master Box Gateway**: The phone connects to any available box. That box acts as a gateway to the rest of the mesh, reporting peer status via `CMD_MESH_STATUS` and a consolidated inventory.
+- **Gateway Box**: The phone connects to any available box. That box acts as a gateway to the rest of the mesh, reporting peer status via `CMD_MESH_STATUS` and a consolidated inventory. There is no permanently designated master box — any box can serve as the gateway.
 - **Large-Scale Alternative**: For commercial inventories (5000+ items), pivot to "Query-on-Demand" + Light Sleep with DTIM for real-time responsiveness at the cost of battery life.
 
 ## Mesh Identity & PIN
@@ -103,6 +103,7 @@ Box joining flow (e.g., adding Box C to an existing A+B mesh):
 - **Zero heap fragmentation**: static or pool-allocated buffers only. Nodes run indefinitely.
 - **No external infrastructure**: BLE and ESP-Mesh only. No Wi-Fi, no cloud, no DNS.
 - **`imb_local` is ground truth**: never derive item presence from `imb_mesh` when local data exists.
+- **Report generation is decoupled from BLE**: lid close → delta → Box Report. OLED and BLE are independent consumers. A box generates and displays its own report whether or not a phone is connected.
 - **Idempotent transactions**: same transaction arriving twice is a no-op (deduplicate by `box_id` + `seq`).
 - **NVS writes are atomic**: use versioned double-buffer or NVS transactions to survive power-loss mid-write.
 - **Directional detection is authoritative**: AMBIGUOUS events are never silently resolved — always surfaced to user.

@@ -181,12 +181,21 @@ Callbacks: `on_subscribed(ctx)` [EVENT_NOTIFY CCCD enabled], `on_cmd(ctx, buf, l
 - [x] Protocol Sync: generated Dart models from `imb_protocol.h`
 - [ ] Mesh View UI: multi-box summary (next)
 
-## Phase 2 — Master Box (current branch: `feat/phase2-master-box`)
+## Phase 2 — Per-Box OLED Display
 
-- [ ] 3-button navigation driver (UP GPIO 14, SELECT GPIO 15, BACK GPIO 16)
-- [ ] Master box UI: registration flow on-device
-- [ ] Master box UI: field check report display
-- [ ] Master box UI: mesh status + box list
+Every box gets a 0.96" SSD1306 OLED (128×64, I2C GPIO 2/3). No navigation buttons — display is event-driven.
+Report generation decoupled from BLE: lid close → delta → report. Screen and BLE are independent consumers.
+
+### `imb_display` logic component (host-testable, HAL-injected)
+- [ ] Define `imb_display_state_t`: box_name, op_mode, mesh_peer_count (`IMB_DISPLAY_MESH_UNKNOWN` until Phase 3), phone_connected, last_event (direction + item name + type), report (missing items array + count)
+- [ ] Implement display state machine: Idle → Event (5s takeover) → Idle; Idle → Report cycling (2s/item, MISSING only) → Idle; any state → Error (held until next event)
+- [ ] Screen layouts: SETUP (mode + last-4-MAC), FIELD_CHECK idle (box name + mode + mesh + phone), REGISTRATION idle (mode + pending count), REGISTRATION_INCOMPLETE idle (error — held until resolved), detection event (direction + item name), UNKNOWN TAG (error), AMBIGUOUS (error), report cycling (MISSING N/total + item name)
+- [ ] Host tests for state machine transitions
+
+### `imb_display_ssd1306` HAL (on-device only)
+- [ ] SSD1306 I2C init sequence (reference esp-idf-ssd1306 or u8g2)
+- [ ] HAL struct: `draw_text(row, col, str)` + `clear()`
+- [ ] Wire into `main.c`: feed `imb_display_state_t` from NFC events, lid-close report, BLE connection state
 
 ---
 
