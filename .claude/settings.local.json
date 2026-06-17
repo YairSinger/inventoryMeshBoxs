@@ -12,7 +12,11 @@
       "Bash(git -C /Users/yair/git/inventoryMeshBoxs commit -m ' *)",
       "Bash(git -C /Users/yair/git/skills add chip-integration.md)",
       "Bash(git -C /Users/yair/git/skills commit -m ' *)",
-      "WebSearch"
+      "WebSearch",
+      "Bash(make run *)",
+      "Bash(git *)",
+      "Bash(grep -E '\\\\.\\(c|h|md\\)$')",
+      "Bash(xargs cat)"
     ]
   }
 }

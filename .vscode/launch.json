@@ -1,0 +1,29 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "ESP32-S3 Debug (Built-in JTAG)",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/build/inventoryMeshBoxs.elf",
+            "miDebuggerPath": "/Users/yair/.espressif/tools/xtensa-esp-elf-gdb/14.2_20240403/xtensa-esp-elf-gdb/bin/xtensa-esp32s3-elf-gdb",
+            "miDebuggerServerAddress": "localhost:3333",
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}",
+            "environment": [],
+            "externalConsole": false,
+            "MIMode": "gdb",
+            "setupCommands": [
+                { "text": "set remote hardware-watchpoint-limit 2" },
+                { "text": "break handle_hello",   "description": "BLE auth — phone sends CMD_HELLO + PIN hash" },
+                { "text": "break handle_set_pin", "description": "Mesh provisioning — phone sets mesh PIN" },
+                { "text": "break handle_name",    "description": "Tag registration — phone assigns name to UID" }
+            ],
+            "preLaunchTask": "OpenOCD: Start (Built-in JTAG)",
+            "postDebugTask": "OpenOCD: Stop",
+            "logging": {
+                "engineLogging": false
+            }
+        }
+    ]
+}

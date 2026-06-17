@@ -1,0 +1,15 @@
+{
+    "idf.espIdfPath": "/Users/yair/esp/esp-idf",
+    "idf.pythonBinPath": "/Users/yair/.espressif/python_env/idf5.3_py3.9_env/bin/python",
+    "idf.toolsPath": "/Users/yair/.espressif",
+    "idf.port": "/dev/cu.usbserial-A5069RR4",
+    "idf.flashBaudRate": "460800",
+    "idf.openOcdConfigs": ["board/esp32s3-builtin.cfg"],
+    "C_Cpp.intelliSenseEngine": "default",
+    "idf.openOcdDebugLevel": 2,
+    "idf.svdFilePath": "",
+    "terminal.integrated.automationProfile.osx": {
+        "path": "/bin/zsh",
+        "args": ["-l"]
+    }
+}

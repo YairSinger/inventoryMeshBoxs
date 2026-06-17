@@ -145,6 +145,54 @@ Install pyserial if needed: `pip3 install pyserial`
 - **Clock**: 500kHz for bringup; can increase to 1MHz+ once verified.
 - **Flash size warning**: `W spi_flash: Detected size(16384k) larger than binary header(2048k)` is harmless — fix by setting flash size to 16MB in menuconfig (`CONFIG_ESPTOOLPY_FLASHSIZE_16MB`).
 
+## VS Code JTAG debugger setup
+
+The `.vscode/` config uses the ESP32-S3's **built-in USB JTAG** (no external debugger needed). All required files are checked in.
+
+### Required VS Code extension
+
+Install the [ESP-IDF extension](https://marketplace.visualstudio.com/items?itemName=espressif.esp-idf-extension).
+
+### USB ports — know which is which
+
+The ESP32-S3 N16R8 has two USB-C ports:
+
+| Port | Used for |
+|---|---|
+| UART (`/dev/cu.usbserial-*`) | Flashing, serial monitor |
+| Native USB / JTAG (`/dev/cu.usbmodem*`) | GDB debugging |
+
+Both can be plugged in at once. The JTAG port is the one directly on the ESP32-S3 chip (no CP2102/CH340 bridge).
+
+### macOS: grant VS Code Full Disk Access
+
+VS Code needs PTY (pseudo-terminal) access to launch tasks and the integrated terminal. Without this, tasks fail with `posix_openpt failed: Device not configured`.
+
+**System Settings → Privacy & Security → Full Disk Access → add Visual Studio Code → restart VS Code.**
+
+### Flashing
+
+Use the ESP-IDF extension's built-in command — it avoids the integrated terminal entirely:
+
+`Cmd+Shift+P` → **ESP-IDF: Flash your project**
+
+Port is read from `.vscode/settings.json` (`idf.port`). Update that value if your UART adapter shows up on a different port.
+
+### Starting a debug session
+
+1. Build the firmware (`Cmd+Shift+B` → **IDF: Build**, or `idf.py build` in terminal)
+2. Flash via the extension command above
+3. Set a breakpoint in `main/main.c` at the first line of `app_main`
+4. Press **F5** → select `ESP32-S3 Debug (Built-in JTAG)`
+
+OpenOCD starts automatically in the background, GDB attaches, and the chip halts at your breakpoint. Use F10/F11 to step.
+
+### Known issues resolved
+
+- **`mon reset halt` not supported**: The `esp32s3-builtin.cfg` OpenOCD target does not accept monitor commands via GDB MI. The `launch.json` only sets `hardware-watchpoint-limit`; reset/halt is handled by OpenOCD on connect.
+- **Exit code 42 on disconnect**: Normal. This is how OpenOCD reports an ESP32 chip reset to GDB — not a real process error.
+- **`posix_openpt failed`**: macOS Full Disk Access issue (see above). Does not affect F5 debug sessions — only affects task-panel commands.
+
 ## Architecture orientation
 
 Read `CLAUDE.md` in the repo root — it documents every major design decision, the two-layer testing strategy, NVS layout, BLE GATT structure, and GPIO assignments. Start there before touching any code.

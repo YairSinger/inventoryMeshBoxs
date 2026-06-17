@@ -1,0 +1,89 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "OpenOCD: Start (Built-in JTAG)",
+            "type": "process",
+            "command": "/Users/yair/.espressif/tools/openocd-esp32/v0.12.0-esp32-20240318/openocd-esp32/bin/openocd",
+            "args": [
+                "-s", "/Users/yair/.espressif/tools/openocd-esp32/v0.12.0-esp32-20240318/openocd-esp32/share/openocd/scripts",
+                "-f", "board/esp32s3-builtin.cfg"
+            ],
+            "isBackground": true,
+            "problemMatcher": {
+                "owner": "openocd",
+                "pattern": { "regexp": "." },
+                "background": {
+                    "activeOnStart": true,
+                    "beginsPattern": "Open On-Chip Debugger",
+                    "endsPattern": "Listening on port 3333"
+                }
+            },
+            "presentation": {
+                "reveal": "silent",
+                "panel": "dedicated",
+                "label": "OpenOCD"
+            }
+        },
+        {
+            "label": "OpenOCD: Stop",
+            "type": "process",
+            "command": "/bin/bash",
+            "args": ["-c", "pkill -f 'openocd.*esp32s3-builtin' || true"],
+            "presentation": {
+                "reveal": "never"
+            }
+        },
+        {
+            "label": "IDF: Flash via JTAG",
+            "type": "process",
+            "command": "/bin/bash",
+            "args": [
+                "-c",
+                ". /Users/yair/esp/esp-idf/export.sh && idf.py openocd flash"
+            ],
+            "group": "build",
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "presentation": {
+                "reveal": "always",
+                "panel": "shared"
+            }
+        },
+        {
+            "label": "IDF: Flash",
+            "type": "process",
+            "command": "/bin/bash",
+            "args": [
+                "-c",
+                ". /Users/yair/esp/esp-idf/export.sh && idf.py -p /dev/cu.usbserial-A5069RR4 flash"
+            ],
+            "group": "build",
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "presentation": {
+                "reveal": "always",
+                "panel": "shared"
+            }
+        },
+        {
+            "label": "IDF: Build",
+            "type": "process",
+            "command": "/bin/bash",
+            "args": [
+                "-c",
+                ". /Users/yair/esp/esp-idf/export.sh && idf.py build"
+            ],
+            "group": { "kind": "build", "isDefault": true },
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "presentation": {
+                "reveal": "always",
+                "panel": "shared"
+            }
+        }
+    ]
+}
