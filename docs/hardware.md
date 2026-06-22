@@ -8,7 +8,7 @@
 | NFC Reader #1 | PN532 | SPI (shared bus) |
 | NFC Reader #2 | PN532 | SPI (shared bus) |
 | NFC Tags | NTAG213 (13.56MHz) | passive |
-| Lid trigger (proto) | BOOT button GPIO0 / HC-SR04 | GPIO0 active-low |
+| Lid Trigger | MC-38 NO magnetic reed switch | GPIO4 input, internal pull-up |
 | LED | WS2812B onboard GPIO48 | RMT peripheral |
 | Buzzer | Passive buzzer 12mm (1.5–6V, SKU A61-B15) | GPIO17 (LEDC PWM) |
 | Display | 0.96" SSD1306 OLED 128×64 | I2C (GPIO 2/3) |
@@ -24,12 +24,12 @@
 | SPI SCK | 12 | shared PN532 #1 + #2 |
 | PN532 #1 CS | 10 | inner reader |
 | PN532 #2 CS | 9 | outer reader |
-| SR04 TRIG | 4 | temporary lid sensor |
-| SR04 ECHO | 5 | temporary lid sensor |
+| Lid Trigger | 4 | MC-38 NO reed switch; lid closed = LOW, lid open = HIGH |
+| GPIO spare | 5 | free after removing HC-SR04 prototype |
 | WS2812B LED | 48 | onboard, RMT driver |
 | I2C SDA | 2 | OLED + fuel gauge |
 | I2C SCL | 3 | OLED + fuel gauge |
-| Lid trigger (proto) | 0 | BOOT button, active-low |
+| BOOT / Factory reset | 0 | onboard BOOT button, active-low; do not use for lid state |
 | Buzzer | 17 | passive buzzer, LEDC PWM, direct drive |
 
 GPIO 19 and 20 are reserved for USB — do not use.
@@ -38,15 +38,29 @@ GPIO 19 and 20 are reserved for USB — do not use.
 
 Both PN532s **must not share a single ESP 3V3 pin** — empirically caused dirty SPI bus (see `TASKS.md` Phase 0 hardware discoveries 2026-05-27). Wire each PN532's VCC to a separate ESP 3V3 pin.
 
+## Lid Trigger Wiring
+
+The final Lid Trigger is an MC-38 NO magnetic reed switch. Mount the magnet so it is close to the reed switch when the lid is closed.
+
+| MC-38 wire | Connects to |
+|---|---|
+| Wire A | GND |
+| Wire B | GPIO4 |
+
+Wire order does not matter. Configure GPIO4 as input with internal pull-up:
+- Lid closed: reed closed, GPIO4 reads LOW
+- Lid open: reed open, GPIO4 reads HIGH
+- Broken/disconnected wire: GPIO4 reads HIGH and is treated as lid open
+
 ## Deep Sleep & Wake
 
-- Primary wake source: GPIO0 (BOOT button, active-low) — temporary until Hall effect sensor
-- Configure: `esp_sleep_enable_ext0_wakeup(GPIO_NUM_0, 0)`
-- On wake: read GPIO0 level to determine lid state
+- Primary wake source: GPIO4 (Lid Trigger, active-high open)
+- Configure: `esp_sleep_enable_ext0_wakeup(GPIO_NUM_4, 1)` or the equivalent ESP32-S3 deep-sleep GPIO wake API
+- On wake: read GPIO4 level to determine lid state
 - BLE active only while lid is open + brief report delivery window after close
 - Both PN532s powered down before deep sleep entry
 
-Use compile-time flag `CONFIG_USE_BOOT_BUTTON_AS_LID` to switch between BOOT button and future Hall effect sensor without architectural changes.
+Use compile-time flag `CONFIG_USE_BOOT_BUTTON_AS_LID` only as a prototype fallback. Production lid state comes from the MC-38 Lid Trigger on GPIO4. GPIO0 remains reserved for BOOT/factory reset because it is a boot strapping pin.
 
 ## Factory Reset (Hardware-Only)
 

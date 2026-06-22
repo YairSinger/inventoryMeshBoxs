@@ -34,13 +34,53 @@ Full mode state machine + transition details: [ble-contract.md §6](ble-contract
 ### FIELD_CHECK mode (default)
 - Lid opens → both PN532s begin continuous polling → BLE advertising starts
 - Insert/extract events fire LED color + `EVENT_TAG` BLE notify in real time
-- Lid closes → delta computed against `imb_local` registry → if delta changed since last check, `REPORT_NOTIFY` fragmented + sent (see [ble-contract.md §4.3](ble-contract.md#43-report-fragmentation))
-- Silence if nothing changed (no alert fatigue)
-- Box stops BLE advertising after report ACKed → deep sleep
+- Lid closes → Field Check Report computed from the Field Check Session and applied to persisted Box Inventory State
+- Field Check Session finalization succeeds only when the new Box Inventory State is persisted locally
+- BLE delivery is separate: if the report has changes, `REPORT_NOTIFY` is fragmented + sent when a phone is available (see [ble-contract.md §4.3](ble-contract.md#43-report-fragmentation))
+- Empty reports are still persisted locally as a clean finalized check, but BLE stays silent unless the phone explicitly asks
+- Box can deep sleep after local finalization and any required delivery-window policy is satisfied
+
+## Lid Trigger and Box Activity
+
+Each Box uses an MC-38 NO magnetic reed switch as its **Lid Trigger**. The magnet is mounted close to the switch when the lid is closed.
+
+| Physical state | GPIO4 level | Meaning |
+|---|---:|---|
+| Lid closed | LOW | Activity window closed |
+| Lid open | HIGH | Activity window open |
+| Sensor disconnected | HIGH via pull-up | Fail open; scan rather than miss changes |
+
+The Lid Trigger is only the debounced open/closed boundary. A host-testable **Box Activity** orchestrator owns the lifecycle around that boundary:
+- Lid open starts or resumes a Field Check Session and starts PN532 polling, BLE advertising, and display updates.
+- Lid close stops accepting NFC scan events, freezes the session, and finalizes it through `imb_inventory_state`.
+- If the lid reopens before local persistence succeeds, the same session is resumed and any generated RAM report is discarded.
+- If the lid reopens after local persistence succeeds, a new session starts; any undelivered Field Check Report remains pending for BLE delivery.
+- BOOT/GPIO0 remains a separate physical control for factory reset and must not be reused for production lid state.
+
+Scan events flow through Box Activity before reaching `imb_session`, so late events after lid close cannot mutate a closed session.
+
+## Box Inventory State
+
+`imb_local` is the registered Item catalog, not the current inventory truth. The persistent current truth is **Box Inventory State**, maintained by the planned `imb_inventory_state` component.
+
+Box Inventory State separates identity class from presence state:
+
+| Identity class | Presence states |
+|---|---|
+| Registered | Unchecked, Present, Missing, Ambiguous |
+| Foreign | Present, Ambiguous |
+
+- **Unchecked** means a registered Item has not yet been evaluated by a finalized Field Check.
+- **Anonymous Tag** is not an inventory state; it belongs only to Item Registration before identity exists.
+- **Ambiguous** describes unresolved presence/direction and can apply to registered Items or foreign Tags.
+- Foreign entries are current-state entries only: if a foreign Tag is absent in the next finalized Field Check, it disappears from Box Inventory State.
+- Mesh migration / movable-mode reconciliation is out of scope for local Box Activity. Later Mesh Report preparation may reconcile a foreign present Tag in one Box with a missing registered Item in another Box.
+
+A **Field Check Report** is the transition record produced by finalizing a Field Check Session. It moves Box Inventory State from the previous persisted state to the next persisted state. Phone ACK affects delivery state only; it does not finalize the Field Check Session.
 
 ## NVS Layout
 
-Five namespaces with different trust levels:
+Six namespaces with different trust levels:
 
 | Namespace | Key | Type | Description |
 |---|---|---|---|
@@ -53,12 +93,16 @@ Five namespaces with different trust levels:
 | `imb_state` | `pending_count` | uint8 | Number of pending (unnamed) UIDs in current/sticky registration |
 | `imb_state` | `pending_uids` | array | Packed array of pending UIDs (up to `IMB_REGISTRY_MAX_ITEMS`) |
 | `imb_state` | `pending_epoch` | uint32 | Registration session id |
+| `imb_inventory_state` | `state` | blob | Latest persisted Box Inventory State |
+| `imb_inventory_state` | `last_report` | blob | Latest Field Check Report transition record |
+| `imb_inventory_state` | `last_report_id` | uint16 | Monotonic local Field Check Report id |
+| `imb_inventory_state` | `delivery_pending` | bool | Latest report still needs phone delivery |
 | `imb_mesh` | `mesh_epoch` | uint8 | Increments at start of each registration session or mesh change |
 | `imb_mesh` | `item_<uid>` | struct | Mesh-wide item registry. Flagged `MESH_STALE` on epoch mismatch. |
 | `imb_txlog` | `tx_<seq>` | struct | Transaction log entries (idempotent, dedupe by box_id+seq). |
 | `imb_txlog` | `tx_head` | uint32 | Latest sequence number |
 
-`imb_local` is always authoritative — valid even when isolated from mesh. `imb_mesh` is best-effort and must be treated as stale if `mesh_epoch` mismatches peers.
+`imb_local` is authoritative for Item identity. `imb_inventory_state` is authoritative for the Box's latest known inventory state. `imb_mesh` is best-effort and must be treated as stale if `mesh_epoch` mismatches peers.
 
 ## Autonomous Mesh & Full Replication
 
@@ -103,7 +147,8 @@ Box joining flow (e.g., adding Box C to an existing A+B mesh):
 - **Zero heap fragmentation**: static or pool-allocated buffers only. Nodes run indefinitely.
 - **No external infrastructure**: BLE and ESP-Mesh only. No Wi-Fi, no cloud, no DNS.
 - **`imb_local` is ground truth**: never derive item presence from `imb_mesh` when local data exists.
-- **Report generation is decoupled from BLE**: lid close → delta → Box Report. OLED and BLE are independent consumers. A box generates and displays its own report whether or not a phone is connected.
+- **Local finalization is decoupled from BLE**: lid close → Field Check Report → persisted Box Inventory State. OLED reads local state; BLE delivers reports when possible.
+- **Lid Trigger is the activity boundary**: lid open starts or resumes a Field Check Session; lid close freezes it and attempts local finalization.
 - **Idempotent transactions**: same transaction arriving twice is a no-op (deduplicate by `box_id` + `seq`).
 - **NVS writes are atomic**: use versioned double-buffer or NVS transactions to survive power-loss mid-write.
 - **Directional detection is authoritative**: AMBIGUOUS events are never silently resolved — always surfaced to user.

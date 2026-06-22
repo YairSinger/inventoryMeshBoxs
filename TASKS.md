@@ -46,7 +46,7 @@
 - [x] WS2812B RMT driver: cycles through LED color contract (GPIO 48) — **DONE** (main/main.c, all 10 patterns confirmed on board)
 - [x] Deep sleep + timer wakeup — **DONE** (integration test PASS, 3s timer → WAKEUP_TIMER confirmed)
 - [x] NVS driver: write + read + erase `imb_local` namespace — **DONE** (integration tests PASS)
-- [ ] Deep sleep + BOOT button wake: GPIO 0 wakes from deep sleep
+- [ ] MC-38 Lid Trigger wake: GPIO4 wakes from deep sleep on lid-open HIGH
 - [ ] BLE GATT server: phone connects, subscribes to notify chars, writes COMMAND_WRITE
 - [ ] Verify GPIO pin assignments on real board (see CLAUDE.md for map)
 
@@ -87,10 +87,55 @@ All components under `components/imb_*/`. Run tests: `cd components/<name>/test 
 - [x] WS2812B RMT driver: cycles through LED color contract (GPIO 48) — **DONE**
 - [x] NVS driver: write + read + erase `imb_local` namespace — **DONE**
 - [x] Deep sleep + timer wakeup — **DONE**
-- [ ] Deep sleep + BOOT button wake: GPIO 0 wakes from deep sleep
+- [ ] MC-38 Lid Trigger driver: GPIO4 input + pull-up; lid closed LOW, lid open HIGH
+- [ ] Deep sleep + Lid Trigger wake: GPIO4 wakes from deep sleep on lid-open HIGH
 - [x] BLE GATT server: phone connects, subscribes to notify chars, writes COMMAND_WRITE — **DONE** (imb_ble + imb_ble_session wired in main.c)
 - [x] Passive buzzer (GPIO 17, LEDC PWM): `imb_buzzer` component, 6 named patterns, wired to NFC events — **DONE**
 - [x] **`imb_led` component** (WS2812B GPIO 48): HAL-pattern component, 9 named patterns, wired to NFC events — **DONE** (7/7 host tests PASS; RMT HAL in imb_led_rmt.c)
+
+## Phase 1 — Lid Trigger + Box Activity
+
+**Hardware:** MC-38 NO magnetic reed switch on GPIO4. One wire to GND, one wire to GPIO4. Internal pull-up enabled. Magnet is close when the lid is closed.
+
+**Polarity:** lid closed = LOW, lid open = HIGH. A disconnected sensor reads HIGH and is treated as lid open.
+
+### `imb_lid_trigger` logic component (host-testable, HAL-injected)
+- [ ] Add instance-based `imb_lid_trigger_t`
+- [ ] HAL exposes `read_state(ctx)` and `now_ms(ctx)`; hardware-specific polarity stays outside logic
+- [ ] Implement 50 ms debounce for transitions after initialization
+- [ ] Initialize stable state immediately from current HAL state on boot
+- [ ] API: `imb_lid_trigger_get_state()` and `imb_lid_trigger_poll()` returning changed stable state
+- [ ] Host tests: boot-open seeding, boot-closed seeding, bounce ignored, stable open edge, stable close edge
+
+### `imb_lid_trigger_gpio_mc38_no` ESP-IDF driver
+- [ ] Configure GPIO4 as input with internal pull-up
+- [ ] Map GPIO4 HIGH → `IMB_LID_OPEN`, GPIO4 LOW → `IMB_LID_CLOSED`
+- [ ] Configure deep-sleep wake on GPIO4 HIGH
+- [ ] Keep GPIO0 for BOOT/factory reset only
+- [ ] Hardware verify: lid closed reads LOW, lid open reads HIGH, disconnected sensor reads HIGH
+- [ ] Hardware verify: deep sleep wakes on lid open from GPIO4 HIGH
+
+### `imb_box_activity` logic component (host-testable orchestrator)
+- [ ] Own `imb_session_t` lifecycle instead of mutating session directly from `main.c`
+- [ ] Route detector events through `imb_box_activity_on_scan_event()`; apply only during open sessions
+- [ ] Model activity states: sleeping, open session, closing session, report unpersisted, report finalized
+- [ ] Lid open starts or resumes the current Field Check Session
+- [ ] Lid close freezes scan input and calls mocked `imb_inventory_state_finalize_field_check(session, out_report_id)`
+- [ ] If local finalization succeeds, reset session and allow delivery/deep-sleep policy
+- [ ] If local finalization fails, keep frozen session in RAM, surface error, and do not enter deep sleep
+- [ ] If lid reopens before finalization succeeds, resume same session and discard generated RAM report
+- [ ] If lid reopens after finalization succeeds, start a new session; pending phone delivery remains separate
+- [ ] Host tests for reopen-before-finalize, reopen-after-finalize, persistence failure, late scan ignored, empty report finalizes
+
+### Planned dependency: `imb_inventory_state`
+- [ ] Plan as separate NVS-backed component; mock/stub during Lid Trigger implementation
+- [ ] Persist latest Box Inventory State locally
+- [ ] Apply finalized Field Check Report as the transition from old state to new state
+- [ ] Persist empty/clean Field Check Reports as successful finalized checks
+- [ ] Track delivery-pending state independently from local finalization
+- [ ] Expose Box Inventory State to OLED and pending Field Check Reports to BLE delivery
+- [ ] Domain model: identity class (`REGISTERED`, `FOREIGN`) separate from presence state (`UNCHECKED`, `PRESENT`, `MISSING`, `AMBIGUOUS`)
+- [ ] Do not seed Box Inventory State during Item Registration; registration updates `imb_local` identity only
 
 ## Phase 1 — BLE Server (architecture decided 2026-05-31)
 
@@ -165,10 +210,10 @@ Callbacks: `on_subscribed(ctx)` [EVENT_NOTIFY CCCD enabled], `on_cmd(ctx, buf, l
 
 #### Remaining after item registration
 - [ ] Wire `on_accept_tag` → `imb_registry` accept/reject (FIELD_CHECK foreign tag flow)
-- [ ] Wire lid-close: `imb_delta` → `imb_ble_session_deliver_report()`
+- [ ] Wire lid-close: `imb_box_activity` → `imb_inventory_state` finalization → BLE report delivery if pending
 - [ ] REGISTRATION_INCOMPLETE lid-open-rescan recovery
 - [ ] Factory reset: 10 s BOOT button hold → erase all four NVS namespaces + NimBLE bond store → reboot
-- [ ] Deep sleep + BOOT button wake: GPIO 0 wakes from deep sleep
+- [ ] Deep sleep + Lid Trigger wake: GPIO4 wakes from deep sleep on lid-open HIGH
 
 ---
 
@@ -184,7 +229,7 @@ Callbacks: `on_subscribed(ctx)` [EVENT_NOTIFY CCCD enabled], `on_cmd(ctx, buf, l
 ## Phase 2 — Per-Box OLED Display
 
 Every box gets a 0.96" SSD1306 OLED (128×64, I2C GPIO 2/3). No navigation buttons — display is event-driven.
-Report generation decoupled from BLE: lid close → delta → report. Screen and BLE are independent consumers.
+Local finalization decoupled from BLE: lid close → Field Check Report → persisted Box Inventory State. Screen displays Box Inventory State; BLE delivers pending Field Check Reports.
 
 ### `imb_display` logic component (host-testable, HAL-injected)
 - [ ] Define `imb_display_state_t`: box_name, op_mode, mesh_peer_count (`IMB_DISPLAY_MESH_UNKNOWN` until Phase 3), phone_connected, last_event (direction + item name + type), report (missing items array + count)
